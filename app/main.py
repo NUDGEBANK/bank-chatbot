@@ -27,16 +27,17 @@ async def chat(req: ChatRequest):
     message = req.message
     user_info = req.user_info
 
+    name = user_info.get("name", "고객")
     income = user_info.get("income", 0)
     credit = user_info.get("creditScore", 0)
 
-    # 🔥 챗봇 로직 (초기 버전)
+    # 🔥 챗봇 로직
     if "대출" in message:
         if income > 4000 and credit > 700:
-            answer = "대출 승인 가능성이 높습니다."
+            answer = f"{name}님, 대출 승인 가능성이 높습니다."
         else:
-            answer = "대출 심사가 필요합니다."
+            answer = f"{name}님, 대출 심사가 필요합니다."
     else:
-        answer = f"'{message}'에 대한 답변입니다."
+        answer = f"{name}님, '{message}'에 대한 답변입니다."
 
     return ChatResponse(answer=answer)
