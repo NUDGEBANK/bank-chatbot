@@ -23,7 +23,7 @@ app.add_middleware(
 def root():
     return {"message": "NUDGEBANK AI 서버(FastAPI) 실행 중"}
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     return StreamingResponse(
         chat_service.stream_answer(
