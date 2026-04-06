@@ -37,15 +37,20 @@ class ChatService:
         credit = user_info.get("creditScore", 0)
 
         # 5. 체인 실행 (비동기 스트리밍)
-        async for chunk in self.chain.astream({
-            "name": name,
-            "income": income,
-            "credit": credit,
-            "message": message
-        }):
-            if not chunk:
-                continue
-            yield chunk
+        try: 
+            async for chunk in self.chain.astream({
+                "name": name,
+                "income": income,
+                "credit": credit,
+                "message": message
+            }):
+                if not chunk:
+                    continue
+                yield chunk
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise
 
 # 싱글톤 패턴으로 서비스 인스턴스 생성
 chat_service = ChatService()
