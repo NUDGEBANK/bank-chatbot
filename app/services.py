@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from typing import AsyncGenerator
+import asyncio
 
 load_dotenv()
 
@@ -19,8 +21,9 @@ class ChatService:
         # 2. LLM 모델 선언
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=0.7,
-            max_tokens=500
+            temperature=0.3,
+            max_tokens=500,
+            streaming=True,
         )
         
         # 3. 출력 파서 (응답 텍스트만 추출)
@@ -28,19 +31,26 @@ class ChatService:
         # 4. 체인 연결(LCEL)
         self.chain = self.prompt | self.llm | self.output_parser
 
-    async def get_answer(self, message: str, user_info: dict) -> str:
+    async def stream_answer(self, message: str, user_info: dict) -> AsyncGenerator[str, None]:
         name = user_info.get("name", "고객")
         income = user_info.get("income", 0)
         credit = user_info.get("creditScore", 0)
 
-        # 5. 체인 실행 (비동기)
-        answer = await self.chain.ainvoke({
-            "name": name,
-            "income": income,
-            "credit": credit,
-            "message": message
-        })
-        return answer
+        # 5. 체인 실행 (비동기 스트리밍)
+        try: 
+            async for chunk in self.chain.astream({
+                "name": name,
+                "income": income,
+                "credit": credit,
+                "message": message
+            }):
+                if not chunk:
+                    continue
+                yield chunk
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise
 
 # 싱글톤 패턴으로 서비스 인스턴스 생성
 chat_service = ChatService()
