@@ -25,7 +25,7 @@ def main():
     model = SentenceTransformer('jhgan/ko-sroberta-multitask')
     
     # PDF 파일 경로 (파일명 확인 필수!)
-    pdf_filename = "약관 및 상품설명서.pdf"
+    pdf_filename = "소비연동형_자동상환_대출_상품설명서_v1.pdf"
     # 상대 경로: rag_ingestion/docs/약관 및 상품.pdf
     pdf_path = os.path.join("rag_ingestion", "docs", pdf_filename)
 
@@ -61,7 +61,7 @@ def main():
         print(f"총 {len(split_docs)}개의 청크 적재 시작...")
         
         # 임시 상품 ID (실제 DB 상품 테이블의 ID와 매칭 권장)
-        loan_product_id = 1 
+        loan_product_id = 11
 
         for i, doc in enumerate(split_docs):
             content = doc.page_content
