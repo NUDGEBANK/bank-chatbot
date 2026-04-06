@@ -1,8 +1,23 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from .schemas import ChatRequest, ChatResponse
 from .services import chat_service
+from fastapi.responses import StreamingResponse
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def root():
@@ -10,10 +25,10 @@ def root():
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    # 서비스 레이어에 로직 위임
-    answer = await chat_service.get_answer(
-        message=req.message, 
-        user_info=req.user_info
+    return StreamingResponse(
+        chat_service.stream_answer(
+            message=req.message,
+            user_info=req.user_info
+        ),
+        media_type="text/plain; charset=utf-8"
     )
-    
-    return ChatResponse(answer=answer)
