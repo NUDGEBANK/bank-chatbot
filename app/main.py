@@ -1,43 +1,19 @@
-import os
-from dotenv import load_dotenv
 from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import Dict, Any
-
-load_dotenv()
+from .schemas import ChatRequest, ChatResponse
+from .services import chat_service
 
 app = FastAPI()
 
-class ChatRequest(BaseModel):
-    user_id: str
-    message: str
-    user_info: Dict[str, Any]
-
-class ChatResponse(BaseModel):
-    answer: str
-
 @app.get("/")
 def root():
-    return {"message": "FastAPI AI 서버 실행 중"}
-
+    return {"message": "NUDGEBANK AI 서버(FastAPI) 실행 중"}
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-
-    message = req.message
-    user_info = req.user_info
-
-    name = user_info.get("name", "고객")
-    income = user_info.get("income", 0)
-    credit = user_info.get("creditScore", 0)
-
-    # 🔥 챗봇 로직
-    if "대출" in message:
-        if income > 4000 and credit > 700:
-            answer = f"{name}님, 대출 승인 가능성이 높습니다."
-        else:
-            answer = f"{name}님, 대출 심사가 필요합니다."
-    else:
-        answer = f"{name}님, '{message}'에 대한 답변입니다."
-
+    # 서비스 레이어에 로직 위임
+    answer = await chat_service.get_answer(
+        message=req.message, 
+        user_info=req.user_info
+    )
+    
     return ChatResponse(answer=answer)
