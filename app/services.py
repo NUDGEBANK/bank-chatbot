@@ -7,16 +7,23 @@ from pgvector.psycopg2 import register_vector
 from sentence_transformers import SentenceTransformer
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+# 추가된 임포트
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
 
 load_dotenv()
 
 class ChatService:
     def __init__(self):
-        # 1. 임베딩 모델 로드 (데이터 적재 시와 동일한 모델)
+        # 세션별 대화 기록을 저장할 딕셔너리 (메모리 저장소)
+        self.store = {}
+
+        # 1. 임베딩 모델 로드
         self.embed_model = SentenceTransformer('jhgan/ko-sroberta-multitask')
         
-        # 2. 프롬프트 정의 (문서 내용 주입을 위한 {context} 추가)
+        # 2. 프롬프트 정의 (history 변수를 위한 MessagesPlaceholder 추가)
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """
 당신은 NUDGEBANK 금융 상담 AI입니다.
@@ -30,10 +37,11 @@ class ChatService:
 [문서 내용]
 {context}
 """.strip()),
+            MessagesPlaceholder(variable_name="history"), # 대화 기록 주입
             ("user", "{message}")
         ])
         
-        # 3. LLM 모델 선언 (스트리밍 설정 유지)
+        # 3. LLM 모델 선언
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
@@ -41,10 +49,25 @@ class ChatService:
             streaming=True,
         )
         
-        # 3. 출력 파서 (응답 텍스트만 추출)
+        # 4. 출력 파서
         self.output_parser = StrOutputParser()
-        # 4. 체인 연결(LCEL)
+        
+        # 5. 기본 체인 연결(LCEL)
         self.chain = self.prompt | self.llm | self.output_parser
+
+        # 6. RunnableWithMessageHistory로 체인 래핑
+        self.chain_with_history = RunnableWithMessageHistory(
+            self.chain,
+            self.get_session_history,
+            input_messages_key="message", # 사용자 입력 키
+            history_messages_key="history", # 프롬프트의 MessagesPlaceholder 이름
+        )
+
+    # 세션 ID에 맞는 대화 기록 객체를 반환하거나 새로 생성하는 함수
+    def get_session_history(self, session_id: str):
+        if session_id not in self.store:
+            self.store[session_id] = InMemoryChatMessageHistory()
+        return self.store[session_id]
 
     def _get_db_connection(self):
         # DB 연결 및 pgvector 등록
@@ -59,20 +82,14 @@ class ChatService:
         return conn
 
     async def _retrieve_docs(self, query: str) -> str:
-        # 질문과 유사한 문서 조각을 DB에서 검색 (동기 함수를 비동기처럼 실행)
-        # 임베딩 생성 (CPU 작업이므로 run_in_executor 권장되나 단순 구현 위해 직접 실행)
         query_embedding = self.embed_model.encode(query).tolist()
-        
-        # DB 검색 (psycopg2는 동기 라이브러리이므로 블로킹 방지를 위해 별도 처리 권장)
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._db_search, query_embedding)
 
     def _db_search(self, embedding):
-        # 실제 DB 검색 로직 (동기)
         conn = self._get_db_connection()
         cur = conn.cursor()
         try:
-            # 코사인 유사도 기반 상위 3개 청크 검색
             search_query = """
                 SELECT content FROM loan_product_documents 
                 ORDER BY embedding <=> %s::vector 
@@ -90,21 +107,30 @@ class ChatService:
         name = user_info.get("name", "고객")
         income = user_info.get("income", 0)
         credit = user_info.get("creditScore", 0)
+        
+        # user_info에서 고유 세션 ID 추출 (없으면 기본값 사용)
+        # 실제 환경에서는 사용자 ID나 세션 토큰을 반드시 전달받아야 합니다.
+        session_id = user_info.get("session_id", "default_session") 
 
-        # 4. 리트리버 실행 (관련 지식 검색)
         try:
+            # 1. 리트리버 실행
             context = await self._retrieve_docs(message)
 
-            # 5. 체인 실행 (스트리밍)
-            async for chunk in self.chain.astream({
-                "name": name,
-                "income": income,
-                "credit": credit,
-                "context": context,
-                "message": message
-            }):
+            # 2. 체인 실행 (스트리밍 및 history 자동 적용)
+            async for chunk in self.chain_with_history.astream(
+                {
+                    "name": name,
+                    "income": income,
+                    "credit": credit,
+                    "context": context,
+                    "message": message
+                },
+                # config를 통해 현재 실행의 session_id를 전달
+                config={"configurable": {"session_id": session_id}}
+            ):
                 if chunk:
                     yield chunk
+                    
         except asyncio.CancelledError:
             raise
         except Exception as e:
