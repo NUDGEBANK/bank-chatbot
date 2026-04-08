@@ -57,7 +57,17 @@ def extract_member_id_from_cookie(request: Request) -> int:
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
-    req.user_info["session_id"] = str(extract_member_id_from_cookie(request))
+    member_id = extract_member_id_from_cookie(request)
+    req.user_info["session_id"] = str(member_id)
+    try:
+        profile = chat_service._get_user_profile(member_id)
+        req.user_info["name"] = profile["name"]
+        req.user_info["creditScore"] = profile["credit"]
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        print(f"_get_user_profile error: {exc}")
+        raise HTTPException(status_code=500, detail="사용자 조회 중 오류가 발생했습니다.") from exc
 
     return StreamingResponse(
         chat_service.stream_answer(

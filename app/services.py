@@ -137,5 +137,39 @@ class ChatService:
             print(f"Error in stream_answer: {e}")
             yield "죄송합니다. 답변을 생성하는 중에 오류가 발생했습니다."
 
+    def _get_user_profile(self, member_id: int):
+        conn = self._get_db_connection()
+        cur = conn.cursor()
+        try:
+            query = """
+                SELECT
+                    m.name,
+                    ch.credit_score
+                FROM member m
+                LEFT JOIN (
+                    SELECT DISTINCT ON (member_id)
+                        member_id,
+                        credit_score
+                    FROM credit_history
+                    ORDER BY member_id, credit_history_id DESC
+                ) ch ON ch.member_id = m.member_id
+                WHERE m.member_id = %s
+            """
+            cur.execute(query, (member_id,))
+            row = cur.fetchone()
+
+            if not row:
+                raise ValueError("회원 정보를 찾을 수 없습니다.")
+
+            name, credit = row
+            return {
+                "name": name,
+                "credit": credit if credit is not None else "확인되지 않음"
+            }
+        finally:
+            cur.close()
+            conn.close()
+
+
 # 싱글톤 패턴으로 서비스 인스턴스 생성
 chat_service = ChatService()
