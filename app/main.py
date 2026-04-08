@@ -2,10 +2,10 @@ import base64
 import os
 
 import jwt
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from dotenv import load_dotenv
 
 from .schemas import ChatRequest, ChatResponse
 from .services import chat_service
@@ -58,7 +58,7 @@ def extract_member_id_from_cookie(request: Request) -> int:
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     member_id = extract_member_id_from_cookie(request)
-    req.user_info["session_id"] = str(member_id)
+
     try:
         profile = chat_service._get_user_profile(member_id)
         req.user_info["name"] = profile["name"]
@@ -67,7 +67,21 @@ async def chat(req: ChatRequest, request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         print(f"_get_user_profile error: {exc}")
-        raise HTTPException(status_code=500, detail="사용자 조회 중 오류가 발생했습니다.") from exc
+        raise HTTPException(status_code=500, detail="Failed to load user profile") from exc
+
+    try:
+        session_id = chat_service.prepare_chat_session(
+            member_id=member_id,
+            requested_session_id=req.session_id,
+            first_message=req.message,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id") from exc
+    except Exception as exc:
+        print(f"prepare_chat_session error: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to prepare chat session") from exc
+
+    req.user_info["session_id"] = session_id
 
     return StreamingResponse(
         chat_service.stream_answer(
@@ -75,4 +89,5 @@ async def chat(req: ChatRequest, request: Request):
             user_info=req.user_info,
         ),
         media_type="text/plain; charset=utf-8",
+        headers={"X-Chat-Session-Id": session_id},
     )
