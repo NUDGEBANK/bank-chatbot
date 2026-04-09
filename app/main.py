@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from .schemas import ChatRequest, ChatResponse
+from .schemas import ChatRequest, ChatResponse, ChatSessionDetail, ChatSessionSummary
 from .services import chat_service
 
 load_dotenv()
@@ -55,7 +55,7 @@ def extract_member_id_from_cookie(request: Request) -> int:
         raise HTTPException(status_code=401, detail="Invalid token") from exc
 
 
-@app.post("/api/chat", response_model=ChatResponse)
+@app.post("/chat-api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     member_id = extract_member_id_from_cookie(request)
 
@@ -91,3 +91,58 @@ async def chat(req: ChatRequest, request: Request):
         media_type="text/plain; charset=utf-8",
         headers={"X-Chat-Session-Id": session_id},
     )
+
+
+@app.get("/chat-api/chat/sessions", response_model=list[ChatSessionSummary])
+def get_chat_sessions(request: Request):
+    member_id = extract_member_id_from_cookie(request)
+
+    try:
+        return chat_service.list_chat_sessions(member_id)
+    except Exception as exc:
+        print(f"get_chat_sessions error: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to load chat sessions") from exc
+
+
+@app.get("/chat-api/chat/sessions/{session_id}", response_model=ChatSessionDetail)
+def get_chat_session(session_id: str, request: Request):
+    member_id = extract_member_id_from_cookie(request)
+
+    try:
+        return chat_service.get_chat_session_detail(member_id, session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Chat session not found") from exc
+    except Exception as exc:
+        print(f"get_chat_session error: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to load chat session") from exc
+
+
+@app.patch("/chat-api/chat/sessions/{session_id}", response_model=ChatSessionSummary)
+async def rename_chat_session(session_id: str, request: Request):
+    member_id = extract_member_id_from_cookie(request)
+
+    try:
+        payload = await request.json()
+        title = str(payload.get("title", ""))
+        return chat_service.rename_chat_session(member_id, session_id, title)
+    except ValueError as exc:
+        message = str(exc)
+        if message == "chat session not found":
+            raise HTTPException(status_code=404, detail="Chat session not found") from exc
+        raise HTTPException(status_code=400, detail="Invalid chat session title") from exc
+    except Exception as exc:
+        print(f"rename_chat_session error: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to rename chat session") from exc
+
+
+@app.delete("/chat-api/chat/sessions/{session_id}", status_code=204)
+def delete_chat_session(session_id: str, request: Request):
+    member_id = extract_member_id_from_cookie(request)
+
+    try:
+        chat_service.delete_chat_session(member_id, session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Chat session not found") from exc
+    except Exception as exc:
+        print(f"delete_chat_session error: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to delete chat session") from exc
