@@ -55,7 +55,7 @@ def extract_member_id_from_cookie(request: Request) -> int:
         raise HTTPException(status_code=401, detail="Invalid token") from exc
 
 
-@app.post("/api/chat", response_model=ChatResponse)
+@app.post("/chat-api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     member_id = extract_member_id_from_cookie(request)
 
@@ -93,7 +93,7 @@ async def chat(req: ChatRequest, request: Request):
     )
 
 
-@app.get("/api/chat/sessions", response_model=list[ChatSessionSummary])
+@app.get("/chat-api/chat/sessions", response_model=list[ChatSessionSummary])
 def get_chat_sessions(request: Request):
     member_id = extract_member_id_from_cookie(request)
 
@@ -104,7 +104,7 @@ def get_chat_sessions(request: Request):
         raise HTTPException(status_code=500, detail="Failed to load chat sessions") from exc
 
 
-@app.get("/api/chat/sessions/{session_id}", response_model=ChatSessionDetail)
+@app.get("/chat-api/chat/sessions/{session_id}", response_model=ChatSessionDetail)
 def get_chat_session(session_id: str, request: Request):
     member_id = extract_member_id_from_cookie(request)
 
@@ -117,7 +117,7 @@ def get_chat_session(session_id: str, request: Request):
         raise HTTPException(status_code=500, detail="Failed to load chat session") from exc
 
 
-@app.patch("/api/chat/sessions/{session_id}", response_model=ChatSessionSummary)
+@app.patch("/chat-api/chat/sessions/{session_id}", response_model=ChatSessionSummary)
 async def rename_chat_session(session_id: str, request: Request):
     member_id = extract_member_id_from_cookie(request)
 
@@ -135,7 +135,7 @@ async def rename_chat_session(session_id: str, request: Request):
         raise HTTPException(status_code=500, detail="Failed to rename chat session") from exc
 
 
-@app.delete("/api/chat/sessions/{session_id}", status_code=204)
+@app.delete("/chat-api/chat/sessions/{session_id}", status_code=204)
 def delete_chat_session(session_id: str, request: Request):
     member_id = extract_member_id_from_cookie(request)
 
