@@ -48,7 +48,7 @@ class ChatService:
         self.output_parser = StrOutputParser()
         self.chain = self.prompt | self.llm | self.output_parser
 
-    def _get_db_connection(self):
+    def _get_db_connection(self, *, register_vector_type: bool = True):
         conn = psycopg2.connect(
             host=os.getenv("DB_HOST"),
             port=os.getenv("DB_PORT"),
@@ -56,11 +56,12 @@ class ChatService:
             user=os.getenv("DB_USER"),
             password=os.getenv("DB_PASS"),
         )
-        register_vector(conn)
+        if register_vector_type:
+            register_vector(conn)
         return conn
 
     def _load_session_messages(self, session_id: str) -> list[tuple[str, str]]:
-        conn = self._get_db_connection()
+        conn = self._get_db_connection(register_vector_type=False)
         cur = conn.cursor()
         try:
             cur.execute(
@@ -92,7 +93,7 @@ class ChatService:
         session_id = self._resolve_session_id(requested_session_id)
         title = self._build_session_title(first_message)
 
-        conn = self._get_db_connection()
+        conn = self._get_db_connection(register_vector_type=False)
         cur = conn.cursor()
         try:
             cur.execute(
@@ -143,7 +144,7 @@ class ChatService:
         return compact[:255]
 
     def _save_chat_message(self, session_id: str, sender_type: str, message_content: str) -> None:
-        conn = self._get_db_connection()
+        conn = self._get_db_connection(register_vector_type=False)
         cur = conn.cursor()
         try:
             cur.execute(
@@ -230,7 +231,7 @@ class ChatService:
             yield "죄송합니다. 답변을 생성하는 중에 오류가 발생했습니다."
 
     def _get_user_profile(self, member_id: int):
-        conn = self._get_db_connection()
+        conn = self._get_db_connection(register_vector_type=False)
         cur = conn.cursor()
         try:
             query = """
@@ -258,6 +259,150 @@ class ChatService:
                 "name": name,
                 "credit": credit if credit is not None else "확인되지 않음",
             }
+        finally:
+            cur.close()
+            conn.close()
+
+    def list_chat_sessions(self, member_id: int) -> list[dict]:
+        conn = self._get_db_connection(register_vector_type=False)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT session_id, title, created_at, updated_at
+                FROM chat_sessions
+                WHERE member_id = %s
+                ORDER BY updated_at DESC NULLS LAST, created_at DESC, session_id DESC
+                """,
+                (member_id,),
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "session_id": str(session_id),
+                    "title": title or "새 상담",
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                }
+                for session_id, title, created_at, updated_at in rows
+            ]
+        finally:
+            cur.close()
+            conn.close()
+
+    def get_chat_session_detail(self, member_id: int, session_id: str) -> dict:
+        normalized_session_id = self._resolve_session_id(session_id)
+        conn = self._get_db_connection(register_vector_type=False)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT session_id, title, created_at, updated_at
+                FROM chat_sessions
+                WHERE session_id = %s AND member_id = %s
+                """,
+                (normalized_session_id, member_id),
+            )
+            session_row = cur.fetchone()
+            if session_row is None:
+                raise ValueError("chat session not found")
+
+            cur.execute(
+                """
+                SELECT message_id, sender_type, message_content, created_at
+                FROM chat_messages
+                WHERE session_id = %s
+                ORDER BY created_at ASC, message_id ASC
+                """,
+                (normalized_session_id,),
+            )
+            message_rows = cur.fetchall()
+
+            session_id_value, title, created_at, updated_at = session_row
+            return {
+                "session_id": str(session_id_value),
+                "title": title or "새 상담",
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "messages": [
+                    {
+                        "message_id": message_id,
+                        "sender_type": sender_type,
+                        "message_content": message_content,
+                        "created_at": created_at,
+                    }
+                    for message_id, sender_type, message_content, created_at in message_rows
+                ],
+            }
+        finally:
+            cur.close()
+            conn.close()
+
+    def rename_chat_session(self, member_id: int, session_id: str, title: str) -> dict:
+        normalized_session_id = self._resolve_session_id(session_id)
+        normalized_title = " ".join(title.split()).strip()
+        if not normalized_title:
+            raise ValueError("title is required")
+
+        conn = self._get_db_connection(register_vector_type=False)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                UPDATE chat_sessions
+                SET title = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE session_id = %s AND member_id = %s
+                RETURNING session_id, title, created_at, updated_at
+                """,
+                (normalized_title[:255], normalized_session_id, member_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise ValueError("chat session not found")
+
+            conn.commit()
+            session_id_value, updated_title, created_at, updated_at = row
+            return {
+                "session_id": str(session_id_value),
+                "title": updated_title,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            }
+        finally:
+            cur.close()
+            conn.close()
+
+    def delete_chat_session(self, member_id: int, session_id: str) -> None:
+        normalized_session_id = self._resolve_session_id(session_id)
+        conn = self._get_db_connection(register_vector_type=False)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT 1
+                FROM chat_sessions
+                WHERE session_id = %s AND member_id = %s
+                """,
+                (normalized_session_id, member_id),
+            )
+            if cur.fetchone() is None:
+                raise ValueError("chat session not found")
+
+            cur.execute(
+                """
+                DELETE FROM chat_messages
+                WHERE session_id = %s
+                """,
+                (normalized_session_id,),
+            )
+            cur.execute(
+                """
+                DELETE FROM chat_sessions
+                WHERE session_id = %s AND member_id = %s
+                """,
+                (normalized_session_id, member_id),
+            )
+            conn.commit()
         finally:
             cur.close()
             conn.close()
