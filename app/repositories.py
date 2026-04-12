@@ -27,6 +27,31 @@ class ChatRepository:
             cur.close()
             conn.close()
 
+    def search_past_conversations(
+        self, member_id: int, current_session_id: str, query_embedding: list[float], limit: int = 3) -> str:
+        #현재 세션을 제외한 해당 멤버의 모든 과거 대화 중 유사도가 높은 내역 검색
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT m.sender_type, m.message_content
+                FROM chat_messages m
+                JOIN chat_sessions s ON m.session_id = s.session_id
+                WHERE s.member_id = %s 
+                  AND m.session_id != %s 
+                  AND m.embedding IS NOT NULL
+                ORDER BY m.embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (member_id, current_session_id, query_embedding, limit),
+            )
+            rows = cur.fetchall()
+            return "\n".join([f"[{'사용자' if r[0]=='USER' else 'NUDGEBOT'}] {r[1]}" for r in rows])
+        finally:
+            cur.close()
+            conn.close()
+
     def prepare_chat_session(
         self, member_id: int, requested_session_id: str | None, title: str
     ) -> str:
@@ -70,16 +95,16 @@ class ChatRepository:
             cur.close()
             conn.close()
 
-    def save_chat_message(self, session_id: str, sender_type: str, message_content: str) -> None:
+    def save_chat_message(self, session_id: str, sender_type: str, message_content: str, embedding: list[float] | None = None) -> None:
         conn = get_db_connection(register_vector_type=False)
         cur = conn.cursor()
         try:
             cur.execute(
                 """
-                INSERT INTO chat_messages (session_id, sender_type, message_content, created_at)
-                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                INSERT INTO chat_messages (session_id, sender_type, message_content, embedding, created_at)
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
                 """,
-                (session_id, sender_type, message_content),
+                (session_id, sender_type, message_content, embedding),
             )
             cur.execute(
                 """
