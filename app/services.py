@@ -1,4 +1,5 @@
 import asyncio
+import httpx
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
@@ -9,6 +10,9 @@ from langchain_openai import ChatOpenAI
 from sentence_transformers import SentenceTransformer
 
 from .repositories import ChatRepository, VectorRepository
+from fastapi import HTTPException
+from .schemas import LoanEligibilityResponse
+
 
 load_dotenv()
 
@@ -29,6 +33,18 @@ class ChatService:
 답변은 핵심만 간단명료하게 작성하세요.
 아래 제공된 [문서 내용]을 바탕으로 사용자의 질문에 친절하고 구체적으로 답변하세요.
 만약 문서와 관련된 내용이 없다면 그 범위 안에서는 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요.
+
+대출 가능 여부 판단 규칙:
+- [API 내용]에 "대출 가능 여부" 또는 "판정 결과"가 있으면 그 값을 최종 판단으로 사용한다.
+- [문서 내용]은 설명 보완용으로만 사용하고, [API 내용]의 가능/불가 판단을 뒤집지 않는다.
+- 대출 가능 여부가 True 이거나 판정 결과가 APPROVED이면 반드시 "신청 가능합니다"라고 답한다.
+- 대출 가능 여부가 False 이거나 판정 결과가 REJECTED이면 반드시 "현재는 신청이 어렵습니다"라고 답한다.
+- 신용점수 숫자를 읽을 때는 API 값 그대로 사용한다.
+- API 값을 임의로 해석하거나 반대로 바꾸지 않는다.
+- "API 내용은 ..."처럼 원문을 그대로 읽지 말고 자연스럽게 풀어서 설명한다.
+
+[API 내용]
+{api_context}
 
 [문서 내용]
 {context}
@@ -82,7 +98,7 @@ class ChatService:
             None, self.vector_repository.search_documents, query_embedding
         )
 
-    async def stream_answer(self, message: str, user_info: dict) -> AsyncGenerator[str, None]:
+    async def stream_answer(self, message: str, user_info: dict, api_context: str = "",) -> AsyncGenerator[str, None]:
         name = user_info.get("name", "고객")
         income = user_info.get("income", 0)
         credit = user_info.get("creditScore", 0)
@@ -107,6 +123,7 @@ class ChatService:
                     "context": context,
                     "history": history,
                     "message": message,
+                    "api_context": api_context,
                 }
             ):
                 if chunk:
@@ -138,6 +155,90 @@ class ChatService:
     def delete_chat_session(self, member_id: int, session_id: str) -> None:
         self.chat_repository.delete_chat_session(member_id, session_id)
         return
+    
+    def chat_message(self, session_id: str, message: str) -> str:
+        self._save_chat_message(session_id, "USER", message)
+        return "메시지가 저장되었습니다."
 
+
+BANK_BACKEND_URL = "http://localhost:9999"
+
+PRODUCT_NAME_TO_KEY = {
+    "자기계발": "youth-loan",
+    "자기계발 대출": "youth-loan",
+    "청년 대출": "youth-loan",
+    "소비분석": "consumption-loan",
+    "소비분석 대출": "consumption-loan",
+    "비상금": "situate-loan",
+    "비상금 대출": "situate-loan",
+    "긴급 대출": "situate-loan",
+}
+
+
+def infer_intent(message: str) -> str:
+    if "대출" in message and "가능" in message:
+        return "loan_eligibility_check"
+    return "general"
+
+
+def infer_product_key(message: str) -> str | None:
+    normalized = message.strip()
+    for name, product_key in PRODUCT_NAME_TO_KEY.items():
+        if name in normalized:
+            return product_key
+    return None
+
+
+async def fetch_loan_eligibility(
+    access_token: str,
+    product_key: str,
+) -> LoanEligibilityResponse:
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        response = await client.post(
+            f"{BANK_BACKEND_URL}/api/loan-products/eligibility",
+            json={"productKey": product_key},
+            headers={"Cookie": f"AT={access_token}"},
+        )
+
+    if response.status_code == 401:
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED")
+
+    if response.status_code >= 400:
+        try:
+            error_body = response.json()
+        except Exception:
+            error_body = {"message": response.text}
+
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=error_body.get("message", "대출 가능 여부 조회에 실패했습니다."),
+        )
+
+    return LoanEligibilityResponse(**response.json())
+
+
+def build_eligibility_answer(data: LoanEligibilityResponse) -> str:
+    if data.eligible:
+        return (
+            f"현재 내부 신용점수는 {data.creditScore}점입니다. "
+            f"대출 가능 기준인 500점 이상이어서 신청 가능합니다."
+        )
+
+    reason = data.reasons[0] if data.reasons else "대출 기준을 충족하지 않았습니다."
+    return (
+        f"현재 내부 신용점수는 {data.creditScore}점입니다. "
+        f"{reason}"
+    )
+
+def build_eligibility_api_context(data: LoanEligibilityResponse) -> str:
+    reasons = ", ".join(data.reasons) if data.reasons else "판단 사유 없음"
+
+    return (
+        f"상품키: {data.productKey}\n"
+        f"대출 가능 여부: {data.eligible}\n"
+        f"판정 결과: {data.decision}\n"
+        f"내부 신용점수: {data.creditScore}\n"
+        f"판단 사유: {reasons}"
+    )
         
 chat_service = ChatService()

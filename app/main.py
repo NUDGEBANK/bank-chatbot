@@ -7,8 +7,18 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from .schemas import ChatRequest, ChatResponse, ChatSessionDetail, ChatSessionSummary
-from .services import chat_service
+from typing import Optional
+from fastapi import Cookie, FastAPI, HTTPException
+
+from .schemas import ChatRequest, ChatResponse, ChatSessionDetail, ChatSessionSummary, ChatMessageRequest
+from .services import (
+    build_eligibility_answer,
+    chat_service,
+    infer_intent,
+    infer_product_key,
+    fetch_loan_eligibility,
+    build_eligibility_api_context,
+)
 
 load_dotenv()
 
@@ -84,10 +94,34 @@ async def chat(req: ChatRequest, request: Request):
 
     req.user_info["session_id"] = session_id
 
+    api_context = ""
+
+    try:
+        intent = infer_intent(req.message)
+
+        if intent == "loan_eligibility_check":
+            product_key = infer_product_key(req.message)
+            if product_key:
+                token = request.cookies.get("AT")
+                eligibility = await fetch_loan_eligibility(
+                    access_token=token,
+                    product_key=product_key,
+                )
+                api_context = build_eligibility_api_context(eligibility)
+            else:
+                api_context = (
+                    "대출 가능 여부 조회 질문이지만 상품 정보가 없습니다. "
+                    "자기계발 대출, 소비분석 대출, 비상금 대출 중 어떤 상품인지 먼저 확인이 필요합니다."
+                )
+    except Exception as exc:
+        print(f"loan eligibility api context error: {exc}")
+        api_context = "대출 가능 여부 조회 API 결과를 가져오지 못했습니다."
+
     return StreamingResponse(
         chat_service.stream_answer(
             message=req.message,
             user_info=req.user_info,
+            api_context=api_context,
         ),
         media_type="text/plain; charset=utf-8",
         headers={"X-Chat-Session-Id": session_id},
@@ -147,3 +181,42 @@ def delete_chat_session(session_id: str, request: Request):
     except Exception as exc:
         print(f"delete_chat_session error: {exc}")
         raise HTTPException(status_code=500, detail="Failed to delete chat session") from exc
+
+@app.post("/chat/message")
+async def chat_message(
+    body: ChatMessageRequest,
+    AT: Optional[str] = Cookie(default=None),
+):
+    if not AT:
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED")
+
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="메시지가 비어 있습니다.")
+
+    intent = infer_intent(message)
+
+    if intent != "loan_eligibility_check":
+        return {
+            "answer": "현재는 대출 가능 여부 조회 질문만 처리할 수 있습니다.",
+            "intent": intent,
+        }
+
+    product_key = body.productKey or infer_product_key(message)
+    if not product_key:
+        return {
+            "answer": "어떤 상품 기준으로 확인할까요? 자기계발 대출, 소비분석 대출, 비상금 대출 중에서 말씀해 주세요.",
+            "intent": intent,
+        }
+
+    eligibility = await fetch_loan_eligibility(
+        access_token=AT,
+        product_key=product_key,
+    )
+    answer = build_eligibility_answer(eligibility)
+
+    return {
+        "answer": answer,
+        "intent": intent,
+        "eligibility": eligibility.model_dump(),
+    }
