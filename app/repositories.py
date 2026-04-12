@@ -11,9 +11,14 @@ class ChatRepository:
             cur.execute(
                 """
                 SELECT sender_type, message_content
-                FROM chat_messages
-                WHERE session_id = %s
-                ORDER BY created_at ASC, message_id ASC
+                FROM (
+                    SELECT message_id, sender_type, message_content
+                    FROM chat_messages
+                    WHERE session_id = %s
+                    ORDER BY message_id DESC
+                    LIMIT 10 -- 최근 메세지 로드 제한
+                ) AS recent_messages
+                ORDER BY message_id ASC
                 """,
                 (session_id,),
             )
