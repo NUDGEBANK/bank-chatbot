@@ -29,7 +29,7 @@ class ChatRepository:
 
     def search_past_conversations(
         self, member_id: int, current_session_id: str, query_embedding: list[float], limit: int = 3) -> str:
-        #현재 세션을 제외한 해당 멤버의 모든 과거 대화 중 유사도가 높은 내역 검색
+        #현재 세션을 제외한 해당 멤버의 모든 과거 대화 중 유사도가 높은 내역 검색 ##일단은 현재 세션도 포함함
         conn = get_db_connection()
         cur = conn.cursor()
         try:
@@ -39,7 +39,7 @@ class ChatRepository:
                 FROM chat_messages m
                 JOIN chat_sessions s ON m.session_id = s.session_id
                 WHERE s.member_id = %s 
-                  AND m.session_id != %s 
+                  -- AND m.session_id != %s
                   AND m.embedding IS NOT NULL
                 ORDER BY m.embedding <=> %s::vector
                 LIMIT %s
