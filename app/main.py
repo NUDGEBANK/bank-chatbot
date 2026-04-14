@@ -69,6 +69,8 @@ def extract_member_id_from_cookie(request: Request) -> int:
 @app.post("/chat-api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     member_id = extract_member_id_from_cookie(request)
+    
+    req.user_info["member_id"] = member_id
 
     try:
         profile = chat_service._get_user_profile(member_id)
