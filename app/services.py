@@ -100,9 +100,8 @@ class ChatService:
     def _save_chat_message(self, session_id: str, sender_type: str, message_content: str, embedding: list[float] | None = None) -> None:
         self.chat_repository.save_chat_message(session_id, sender_type, message_content, embedding)
 
-    async def stream_answer(self, message: str, user_info: dict) -> AsyncGenerator[str, None]:
-        member_id = user_info.get("member_id")
     async def stream_answer(self, message: str, user_info: dict, api_context: str = "",) -> AsyncGenerator[str, None]:
+        member_id = user_info.get("member_id")
         name = user_info.get("name", "고객")
         credit = user_info.get("creditScore", 0)
         session_id = user_info.get("session_id")
