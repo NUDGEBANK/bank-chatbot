@@ -91,9 +91,12 @@ class ChatService:
         bot_chunks: list[str] = []
 
         try:
-            query_embedding = self.embed_model.encode(message).tolist()
-
             loop = asyncio.get_event_loop()
+
+            query_embedding = await loop.run_in_executor(
+                None, 
+                lambda: self.embed_model.encode(message).tolist()
+            )
 
             # 문서 검색, 과거 대화 검색 (동시실행)
             context, past_context = await asyncio.gather(
@@ -101,13 +104,18 @@ class ChatService:
                 loop.run_in_executor(None, self.chat_repository.search_past_conversations, member_id, session_id, query_embedding)
             )
             
-            history = self._build_history_messages(session_id)
+            history = await loop.run_in_executor(None, self._build_history_messages, session_id)
 
             #print(f"[문서 내용 (Doc RAG)]:\n{context}")
             print(f"[📃대화 RAG (past_context)]:\n{past_context}")
             print(f"[📃대화 기록 (history)]:\n{history}")
 
-            self._save_chat_message(session_id, "USER", message, query_embedding)
+            #사용자 메세지 저장 (비동기 처리)
+            await loop.run_in_executor(
+                None, 
+                self._save_chat_message, 
+                session_id, "USER", message, query_embedding
+            )
 
             async for chunk in self.chain.astream(
                 {
@@ -128,7 +136,14 @@ class ChatService:
                 # 봇 응답에 대한 임베딩은 선택적으로 저장 (현재는 None으로 저장)
                 # bot_embedding = self.embed_model.encode(bot_message).tolist()
                 # self._save_chat_message(session_id, "BOT", bot_message, bot_embedding)
-                self._save_chat_message(session_id, "BOT", bot_message, embedding=None)
+                
+                # self._save_chat_message(session_id, "BOT", bot_message, embedding=None)
+                #봇 메세지 저장 (비동기 처리)
+                await loop.run_in_executor(
+                    None,
+                    self._save_chat_message,
+                    session_id, "BOT", bot_message, None
+                )
 
         except asyncio.CancelledError:
             raise
