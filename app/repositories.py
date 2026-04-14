@@ -11,13 +11,49 @@ class ChatRepository:
             cur.execute(
                 """
                 SELECT sender_type, message_content
-                FROM chat_messages
-                WHERE session_id = %s
-                ORDER BY created_at ASC, message_id ASC
+                FROM (
+                    SELECT message_id, sender_type, message_content
+                    FROM chat_messages
+                    WHERE session_id = %s
+                    ORDER BY message_id DESC
+                    LIMIT 10 -- 최근 메세지 로드 제한
+                ) AS recent_messages
+                ORDER BY message_id ASC
                 """,
                 (session_id,),
             )
             return cur.fetchall()
+        finally:
+            cur.close()
+            conn.close()
+
+    def search_past_conversations(
+        self, member_id: int, current_session_id: str, query_embedding: list[float], limit: int = 3) -> str:
+        #현재 세션의 최근 10개 메세지(History에 들어갈 내용)는 RAG 검색에서 제외
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT m.sender_type, m.message_content
+                FROM chat_messages m
+                JOIN chat_sessions s ON m.session_id = s.session_id
+                WHERE s.member_id = %s
+                  AND m.embedding IS NOT NULL
+                  AND m.message_id NOT IN (
+                      SELECT message_id 
+                      FROM chat_messages 
+                      WHERE session_id = %s 
+                      ORDER BY message_id DESC 
+                      LIMIT 10
+                  )
+                ORDER BY m.embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (member_id, current_session_id, query_embedding, limit),
+            )
+            rows = cur.fetchall()
+            return "\n".join([f"[{'사용자' if r[0]=='USER' else 'NUDGEBOT'}] {r[1]}" for r in rows])
         finally:
             cur.close()
             conn.close()
@@ -65,16 +101,16 @@ class ChatRepository:
             cur.close()
             conn.close()
 
-    def save_chat_message(self, session_id: str, sender_type: str, message_content: str) -> None:
-        conn = get_db_connection(register_vector_type=False)
+    def save_chat_message(self, session_id: str, sender_type: str, message_content: str, embedding: list[float] | None = None) -> None:
+        conn = get_db_connection(register_vector_type=True)
         cur = conn.cursor()
         try:
             cur.execute(
                 """
-                INSERT INTO chat_messages (session_id, sender_type, message_content, created_at)
-                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                INSERT INTO chat_messages (session_id, sender_type, message_content, embedding, created_at)
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
                 """,
-                (session_id, sender_type, message_content),
+                (session_id, sender_type, message_content, embedding),
             )
             cur.execute(
                 """
