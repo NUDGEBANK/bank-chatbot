@@ -115,6 +115,8 @@ async def chat(req: ChatRequest, request: Request):
                     "대출 가능 여부 조회 질문이지만 상품 정보가 없습니다. "
                     "자기계발 대출, 소비분석 대출, 비상금 대출 중 어떤 상품인지 먼저 확인이 필요합니다."
                 )
+    except HTTPException:
+        raise # 401, 404, 400 등 HTTP 오류는 클라이언트에 전달하기 위해 그대로 다시 발생시킴
     except Exception as exc:
         print(f"loan eligibility api context error: {exc}")
         api_context = "대출 가능 여부 조회 API 결과를 가져오지 못했습니다."
