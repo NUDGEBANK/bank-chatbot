@@ -29,7 +29,7 @@ class ChatRepository:
 
     def search_past_conversations(
         self, member_id: int, current_session_id: str, query_embedding: list[float], limit: int = 3) -> str:
-        #현재 세션을 제외한 해당 멤버의 모든 과거 대화 중 유사도가 높은 내역 검색 ##일단은 현재 세션도 포함함
+        #현재 세션의 최근 10개 메세지(History에 들어갈 내용)는 RAG 검색에서 제외
         conn = get_db_connection()
         cur = conn.cursor()
         try:
@@ -38,9 +38,15 @@ class ChatRepository:
                 SELECT m.sender_type, m.message_content
                 FROM chat_messages m
                 JOIN chat_sessions s ON m.session_id = s.session_id
-                WHERE s.member_id = %s 
-                  -- AND m.session_id != %s
+                WHERE s.member_id = %s
                   AND m.embedding IS NOT NULL
+                  AND m.message_id NOT IN (
+                      SELECT message_id 
+                      FROM chat_messages 
+                      WHERE session_id = %s 
+                      ORDER BY message_id DESC 
+                      LIMIT 10
+                  )
                 ORDER BY m.embedding <=> %s::vector
                 LIMIT %s
                 """,
@@ -96,7 +102,7 @@ class ChatRepository:
             conn.close()
 
     def save_chat_message(self, session_id: str, sender_type: str, message_content: str, embedding: list[float] | None = None) -> None:
-        conn = get_db_connection(register_vector_type=False)
+        conn = get_db_connection(register_vector_type=True)
         cur = conn.cursor()
         try:
             cur.execute(
