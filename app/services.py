@@ -1,4 +1,4 @@
-import asyncio
+import asyncio, httpx
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
