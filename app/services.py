@@ -105,12 +105,13 @@ class ChatService:
         try:
             # 사용자 쿼리 임베딩
             user_msg_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(message).tolist())
-            # 사용자 메시지 DB 저장
-            await loop.run_in_executor(None, self._save_chat_message, session_id, "USER", message, user_msg_embedding)
-
+            
             # 기존 대화 기록 로드
             history = await loop.run_in_executor(None, self._build_history_messages, session_id)
             print(f"[📃대화 기록 (history)]:\n{history}")
+
+            # 사용자 메시지 DB 저장
+            await loop.run_in_executor(None, self._save_chat_message, session_id, "USER", message, user_msg_embedding)
             
             input_messages = history + [HumanMessage(content=message)]
 
