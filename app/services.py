@@ -2,8 +2,9 @@ import asyncio, httpx
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.tools import tool
+from langchain.agents import create_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from sentence_transformers import SentenceTransformer
@@ -21,6 +22,9 @@ class ChatService:
         self.chat_repository = ChatRepository()
         self.vector_repository = VectorRepository()
         self.embed_model = SentenceTransformer("jhgan/ko-sroberta-multitask")
+
+        #########################################################################################################################
+
         self.prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -64,14 +68,14 @@ class ChatService:
             ]
         )
 
+#########################################################################################################################
+        # Agent의 판단력을 높이기 위해 gpt-4o-mini 모델 유지
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
             max_tokens=500,
             streaming=True,
         )
-        self.output_parser = StrOutputParser()
-        self.chain = self.prompt | self.llm | self.output_parser
 
     def _load_session_messages(self, session_id: str) -> list[tuple[str, str]]:
         return self.chat_repository.load_session_messages(session_id)
@@ -110,34 +114,74 @@ class ChatService:
             raise ValueError("session_id and member_id are required")
 
         bot_chunks: list[str] = []
+        loop = asyncio.get_event_loop()
+
+        # 사용자 쿼리 임베딩
+        user_msg_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(message).tolist())
+
+        # 1. 도구(Tools) 정의: session_id와 member_id를 사용하기 위해 함수 내부에 선언
+        @tool
+        async def search_loan_info(query: str) -> str:
+            """NUDGEBANK의 대출 상품, 금리, 조건 등에 대한 구체적인 지식이 필요할 때 이 도구를 사용하세요."""
+            print(f"[Agent Tool Call] 🔍 대출 문서 검색 중: {query}") #LLM이 만든 쿼리와 비교
+            query_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(query).tolist())
+            context = await loop.run_in_executor(None, self.vector_repository.search_documents, query_embedding)
+            print(f"[문서 내용 (Doc RAG)]:\n{context}")
+            return context
+
+        @tool
+        async def search_past_chat(query: str) -> str:
+            """과거에 사용자와 나누었던 대화 기록이나 문맥을 확인해야 할 때 이 도구를 사용하세요."""
+            # print(f"[Agent Tool Call] 🗂️ 과거 대화 검색 중: {query}")
+            print(f"[Agent Tool Call] 🗂️ 과거 대화 검색 중: {message}") #유저 원문 메세지와 비교
+            # query_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(query).tolist())
+            past_context = await loop.run_in_executor(None, self.chat_repository.search_past_conversations, member_id, session_id, user_msg_embedding)
+            print(f"[📃대화 RAG (past_context)]:\n{past_context}")
+            return past_context
+
+        # 에이전트가 사용할 도구 목록
+        tools = [search_loan_info, search_past_chat]
+
+        # 2. 시스템 프롬프트(페르소나) 정의
+        system_prompt = f"""당신은 NUDGEBANK 금융 상담 AI NUDGEBOT입니다.
+사용자의 이름은 {name}이며, 신용점수는 {credit}입니다.
+답변은 핵심만 간단명료하게 작성하세요.
+정확한 정보 제공을 위해 필요하다면 반드시 제공된 검색 도구(대출 정보 검색, 과거 대화 검색)를 활용하세요.
+검색 도구를 사용한 후에도 관련된 내용을 찾을 수 없다면, 임의로 지어내지 말고 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요."""
+
+        # 3. Agent 생성
+        agent = create_agent(
+            model=self.llm,
+            tools=tools,
+            system_prompt=system_prompt
+        )
 
         try:
-            loop = asyncio.get_event_loop()
 
-            query_embedding = await loop.run_in_executor(
-                None,
-                lambda: self.embed_model.encode(message).tolist()
-            )
 
-            # 문서 검색, 과거 대화 검색 (동시실행)
-            context, past_context = await asyncio.gather(
-                loop.run_in_executor(None, self.vector_repository.search_documents, query_embedding),
-                loop.run_in_executor(None, self.chat_repository.search_past_conversations, member_id, session_id, query_embedding)
-            )
-
+            # 기존 대화 기록 로드
             history = await loop.run_in_executor(None, self._build_history_messages, session_id)
-
-            #print(f"[문서 내용 (Doc RAG)]:\n{context}")
-            print(f"[📃대화 RAG (past_context)]:\n{past_context}")
             print(f"[📃대화 기록 (history)]:\n{history}")
 
-            #사용자 메세지 저장 (비동기 처리)
-            await loop.run_in_executor(
-                None,
-                self._save_chat_message,
-                session_id, "USER", message, query_embedding
-            )
+            # 사용자 메시지 DB 저장
+            await loop.run_in_executor(None, self._save_chat_message, session_id, "USER", message, user_msg_embedding)
 
+            input_messages = history + [HumanMessage(content=message)]
+
+            # 4. Agent 실행 및 스트리밍 처리
+            async for event in agent.astream_events({"messages": input_messages}, version="v2"):
+                # on_chat_model_stream 이벤트에서만 텍스트를 추출
+                if event["event"] == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"]
+
+                    # 도구 호출(tool_calls) 데이터가 없고 순수 텍스트(content)만 있을 때 스트리밍
+                    if chunk.content and not chunk.tool_calls:
+                        content = chunk.content
+                        if isinstance(content, list):
+                            content = "".join([c.get("text", "") for c in content if isinstance(c, dict)])
+
+                        bot_chunks.append(content)
+                        yield content
             async for chunk in self.chain.astream(
                 {
                     "name": name,
@@ -153,14 +197,9 @@ class ChatService:
                     bot_chunks.append(chunk)
                     yield chunk
 
+            # 스트리밍 완료 후 봇 메시지 DB 저장
             bot_message = "".join(bot_chunks).strip()
             if bot_message:
-                # 봇 응답에 대한 임베딩은 선택적으로 저장 (현재는 None으로 저장)
-                # bot_embedding = self.embed_model.encode(bot_message).tolist()
-                # self._save_chat_message(session_id, "BOT", bot_message, bot_embedding)
-
-                # self._save_chat_message(session_id, "BOT", bot_message, embedding=None)
-                #봇 메세지 저장 (비동기 처리)
                 await loop.run_in_executor(
                     None,
                     self._save_chat_message,
@@ -273,5 +312,5 @@ def build_eligibility_api_context(data: LoanEligibilityResponse) -> str:
         f"내부 신용점수: {data.creditScore}\n"
         f"판단 사유: {reasons}"
     )
-        
+
 chat_service = ChatService()
