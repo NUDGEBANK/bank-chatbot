@@ -66,11 +66,14 @@ class ChatService:
         bot_chunks: list[str] = []
         loop = asyncio.get_event_loop()
 
+        # 사용자 쿼리 임베딩
+        user_msg_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(message).tolist())
+
         # 1. 도구(Tools) 정의: session_id와 member_id를 사용하기 위해 함수 내부에 선언
         @tool
         async def search_loan_info(query: str) -> str:
             """NUDGEBANK의 대출 상품, 금리, 조건 등에 대한 구체적인 지식이 필요할 때 이 도구를 사용하세요."""
-            print(f"[Agent Tool Call] 🔍 대출 문서 검색 중: {query}")
+            print(f"[Agent Tool Call] 🔍 대출 문서 검색 중: {query}") #LLM이 만든 쿼리와 비교
             query_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(query).tolist())
             context = await loop.run_in_executor(None, self.vector_repository.search_documents, query_embedding)
             print(f"[문서 내용 (Doc RAG)]:\n{context}")
@@ -79,9 +82,10 @@ class ChatService:
         @tool
         async def search_past_chat(query: str) -> str:
             """과거에 사용자와 나누었던 대화 기록이나 문맥을 확인해야 할 때 이 도구를 사용하세요."""
-            print(f"[Agent Tool Call] 🗂️ 과거 대화 검색 중: {query}")
-            query_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(query).tolist())
-            past_context = await loop.run_in_executor(None, self.chat_repository.search_past_conversations, member_id, session_id, query_embedding)
+            # print(f"[Agent Tool Call] 🗂️ 과거 대화 검색 중: {query}")
+            print(f"[Agent Tool Call] 🗂️ 과거 대화 검색 중: {message}") #유저 원문 메세지와 비교
+            # query_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(query).tolist())
+            past_context = await loop.run_in_executor(None, self.chat_repository.search_past_conversations, member_id, session_id, user_msg_embedding)
             print(f"[📃대화 RAG (past_context)]:\n{past_context}")
             return past_context
 
@@ -103,8 +107,7 @@ class ChatService:
         )
 
         try:
-            # 사용자 쿼리 임베딩
-            user_msg_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(message).tolist())
+            
             
             # 기존 대화 기록 로드
             history = await loop.run_in_executor(None, self._build_history_messages, session_id)
