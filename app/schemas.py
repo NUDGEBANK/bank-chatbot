@@ -36,12 +36,6 @@ class ChatSessionDetail(BaseModel):
     updated_at: Optional[datetime] = None
     messages: list[ChatMessageItem]
 
-
-class ChatMessageRequest(BaseModel):
-    message: str
-    productKey: Optional[str] = None
-
-
 class LoanEligibilityResponse(BaseModel):
     eligible: bool
     decision: str

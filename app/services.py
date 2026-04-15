@@ -17,33 +17,6 @@ load_dotenv()
 
 BANK_BACKEND_URL = os.getenv("BANK_BACKEND_URL", "http://localhost:9999")
 
-PRODUCT_NAME_TO_KEY = {
-    "자기계발": "youth-loan",
-    "자기계발 대출": "youth-loan",
-    "청년 대출": "youth-loan",
-    "소비분석": "consumption-loan",
-    "소비분석 대출": "consumption-loan",
-    "비상금": "situate-loan",
-    "비상금 대출": "situate-loan",
-    "긴급 대출": "situate-loan",
-}
-
-
-def infer_intent(message: str) -> str:
-    normalized = message.strip()
-    if "대출" in normalized and ("가능" in normalized or "조회" in normalized):
-        return "loan_eligibility_check"
-    return "general"
-
-
-def infer_product_key(message: str) -> str | None:
-    normalized = message.strip()
-    for name, product_key in PRODUCT_NAME_TO_KEY.items():
-        if name in normalized:
-            return product_key
-    return None
-
-
 async def fetch_loan_eligibility(
     access_token: str,
     product_key: str,
