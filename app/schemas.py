@@ -35,3 +35,10 @@ class ChatSessionDetail(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     messages: list[ChatMessageItem]
+
+class LoanEligibilityResponse(BaseModel):
+    eligible: bool
+    decision: str
+    creditScore: int
+    productKey: str
+    reasons: list[str]

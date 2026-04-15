@@ -3,12 +3,16 @@ import os
 
 import jwt
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Cookie, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from typing import Optional
+
 from .schemas import ChatRequest, ChatResponse, ChatSessionDetail, ChatSessionSummary
-from .services import chat_service
+from .services import (
+    chat_service,
+)
 
 load_dotenv()
 
@@ -59,7 +63,8 @@ def extract_member_id_from_cookie(request: Request) -> int:
 @app.post("/chat-api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     member_id = extract_member_id_from_cookie(request)
-    
+    access_token = request.cookies.get("AT")
+
     req.user_info["member_id"] = member_id
 
     try:
@@ -90,6 +95,7 @@ async def chat(req: ChatRequest, request: Request):
         chat_service.stream_answer(
             message=req.message,
             user_info=req.user_info,
+            access_token=access_token,
         ),
         media_type="text/plain; charset=utf-8",
         headers={"X-Chat-Session-Id": session_id},
