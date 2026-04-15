@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from .rag_admin import RagAdminService
+from .rag_admin_stream import RagAdminService
 from .schemas import (
     ChatRequest,
     ChatResponse,
@@ -170,23 +170,20 @@ def list_rag_documents():
         raise HTTPException(status_code=500, detail="Failed to load rag documents") from exc
 
 
-@app.post("/chat-api/admin/ragdocs/ingest", response_model=RagIngestResponse)
+@app.post("/chat-api/admin/ragdocs/ingest")
 async def ingest_rag_document(
     file: UploadFile = File(...),
     loan_product_id: int | None = Form(default=None),
     overwrite_confirmed: bool = Form(default=False),
 ):
-    try:
-        return rag_admin_service.ingest_pdf(
+    return StreamingResponse(
+        rag_admin_service.stream_ingest_pdf(
             upload_file=file,
             requested_product_id=loan_product_id,
             overwrite_confirmed=overwrite_confirmed,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        print(f"ingest_rag_document error: {exc}")
-        raise HTTPException(status_code=500, detail="Failed to ingest rag document") from exc
+        ),
+        media_type="application/x-ndjson; charset=utf-8",
+    )
 
 
 @app.delete("/chat-api/admin/ragdocs/{loan_product_id}", response_model=RagDeleteResponse)
