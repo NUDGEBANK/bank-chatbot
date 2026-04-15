@@ -3,21 +3,19 @@ import os
 
 import jwt
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Cookie, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from typing import Optional
-from fastapi import Cookie, FastAPI, HTTPException
 
 from .schemas import ChatRequest, ChatResponse, ChatSessionDetail, ChatSessionSummary, ChatMessageRequest
 from .services import (
     build_eligibility_answer,
     chat_service,
+    fetch_loan_eligibility,
     infer_intent,
     infer_product_key,
-    fetch_loan_eligibility,
-    build_eligibility_api_context,
 )
 
 load_dotenv()
@@ -69,7 +67,8 @@ def extract_member_id_from_cookie(request: Request) -> int:
 @app.post("/chat-api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     member_id = extract_member_id_from_cookie(request)
-    
+    access_token = request.cookies.get("AT")
+
     req.user_info["member_id"] = member_id
 
     try:
@@ -96,36 +95,11 @@ async def chat(req: ChatRequest, request: Request):
 
     req.user_info["session_id"] = session_id
 
-    api_context = ""
-
-    try:
-        intent = infer_intent(req.message)
-
-        if intent == "loan_eligibility_check":
-            product_key = infer_product_key(req.message)
-            if product_key:
-                token = request.cookies.get("AT")
-                eligibility = await fetch_loan_eligibility(
-                    access_token=token,
-                    product_key=product_key,
-                )
-                api_context = build_eligibility_api_context(eligibility)
-            else:
-                api_context = (
-                    "대출 가능 여부 조회 질문이지만 상품 정보가 없습니다. "
-                    "자기계발 대출, 소비분석 대출, 비상금 대출 중 어떤 상품인지 먼저 확인이 필요합니다."
-                )
-    except HTTPException:
-        raise # 401, 404, 400 등 HTTP 오류는 클라이언트에 전달하기 위해 그대로 다시 발생시킴
-    except Exception as exc:
-        print(f"loan eligibility api context error: {exc}")
-        api_context = "대출 가능 여부 조회 API 결과를 가져오지 못했습니다."
-
     return StreamingResponse(
         chat_service.stream_answer(
             message=req.message,
             user_info=req.user_info,
-            api_context=api_context,
+            access_token=access_token,
         ),
         media_type="text/plain; charset=utf-8",
         headers={"X-Chat-Session-Id": session_id},
