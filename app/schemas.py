@@ -51,6 +51,27 @@ class ChatSessionDetail(BaseModel):
     updated_at: Optional[datetime] = None
     messages: list[ChatMessageItem]
 
+
+class RagDocumentSummary(BaseModel):
+    loan_product_id: int
+    source_name: str
+    chunk_count: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class RagIngestResponse(BaseModel):
+    status: str
+    message: str
+    assigned_product_id: int
+    document: Optional[RagDocumentSummary] = None
+    logs: list[str]
+
+
+class RagDeleteResponse(BaseModel):
+    message: str
+    deleted_chunks: int
+    logs: list[str]
 class LoanEligibilityResponse(BaseModel):
     eligible: bool
     decision: str
