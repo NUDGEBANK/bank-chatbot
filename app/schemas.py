@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel
 
@@ -11,8 +11,23 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+class ChatActionAsk(BaseModel):
+    type: Literal["ask"]
+    label: str
+    value: str
+
+
+class ChatActionNavigate(BaseModel):
+    type: Literal["navigate"]
+    label: str
+    href: str
+
+ChatAction = Union[ChatActionAsk, ChatActionNavigate]
+
+
 class ChatResponse(BaseModel):
     answer: str
+    quickReplies: list[ChatAction] = []
 
 
 class ChatSessionSummary(BaseModel):

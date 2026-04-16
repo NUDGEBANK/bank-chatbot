@@ -23,9 +23,8 @@ def main():
     # 2. 모델 및 설정 준비
     print("임베딩 모델 로딩 중...")
     model = SentenceTransformer('jhgan/ko-sroberta-multitask')
-    
     # PDF 파일 경로 (파일명 확인 필수!)
-    pdf_filename = "신한_쏠가전_대출_상품안내.pdf"
+    pdf_filename = "챗봇상품v1.pdf"
     # 상대 경로: rag_ingestion/docs/약관 및 상품.pdf
     pdf_path = os.path.join("docs", pdf_filename)
 

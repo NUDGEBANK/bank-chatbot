@@ -1,5 +1,4 @@
-import asyncio, httpx
-import os
+import asyncio, httpx, os, json
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
@@ -8,6 +7,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
 from .repositories import ChatRepository, VectorRepository
@@ -16,6 +16,29 @@ from .schemas import LoanEligibilityResponse
 load_dotenv()
 
 BANK_BACKEND_URL = os.getenv("BANK_BACKEND_URL", "http://localhost:9999")
+
+class SuggestedAction(BaseModel):
+    type: str
+    label: str
+    value: str | None = None
+    href: str | None = None
+
+
+class SuggestedActionBundle(BaseModel):
+    quickReplies: list[SuggestedAction]
+
+
+AVAILABLE_PAGES = [
+    {"href": "/", "label": "홈으로 이동"},
+    {"href": "/loan/products", "label": "대출 상품 보기"},
+    {"href": "/loan/apply-guide", "label": "대출 신청 안내 보기"},
+    {"href": "/deposit/products", "label": "예적금 상품 보기"},
+    {"href": "/card/ddokgae", "label": "똑개 카드 보기"},
+    {"href": "/card/spending-analysis", "label": "소비 분석 보기"},
+    {"href": "/account/ddokgae", "label": "똑개 통장 보기"},
+    {"href": "/help/chat-history", "label": "상담 기록 보기"},
+]
+
 
 async def fetch_loan_eligibility(
     access_token: str,
@@ -61,6 +84,10 @@ def build_eligibility_answer(data: LoanEligibilityResponse) -> str:
         f"{reason}"
     )
 
+
+def to_sse(event_type: str, payload: dict) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
 class ChatService:
     def __init__(self):
         self.chat_repository = ChatRepository()
@@ -73,6 +100,11 @@ class ChatService:
             temperature=0,
             max_tokens=500,
             streaming=True,
+        )
+        self.action_llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0,
+            max_tokens=250,
         )
 
     def _load_session_messages(self, session_id: str) -> list[tuple[str, str]]:
@@ -99,10 +131,78 @@ class ChatService:
             return "새 상담"
         return compact[:255]
 
-    def _save_chat_message(self, session_id: str, sender_type: str, message_content: str, embedding: list[float] | None = None) -> None:
+    def _save_chat_message(
+        self,
+        session_id: str,
+        sender_type: str,
+        message_content: str,
+        embedding: list[float] | None = None,
+    ) -> None:
         self.chat_repository.save_chat_message(session_id, sender_type, message_content, embedding)
 
-    async def stream_answer(self, message: str, user_info: dict, access_token: str,) -> AsyncGenerator[str, None]:
+    async def _infer_next_actions(
+        self,
+        user_message: str,
+        bot_message: str,
+    ) -> list[dict]:
+        prompt = f"""
+너는 NUDGEBANK 챗봇의 다음 행동 추천기다.
+사용자 질문과 최종 답변을 보고, 다음에 누르면 좋은 버튼을 최대 3개 추천해라.
+
+규칙:
+- 버튼 타입은 ask 또는 navigate 둘 중 하나만 사용
+- navigate는 반드시 아래 경로만 사용
+- ask는 자연스러운 다음 질문이어야 함
+- 현재 답변과 직접 이어지는 행동만 추천
+- 중복 금지
+- 한국어로 작성
+
+사용 가능한 이동 경로:
+{json.dumps(AVAILABLE_PAGES, ensure_ascii=False)}
+
+사용자 질문:
+{user_message}
+
+최종 답변:
+{bot_message}
+""".strip()
+
+        structured = self.action_llm.with_structured_output(SuggestedActionBundle)
+        result = await structured.ainvoke(prompt)
+
+        validated: list[dict] = []
+        for item in result.quickReplies[:3]:
+            if item.type == "navigate" and item.href:
+                validated.append(
+                    {
+                        "type": "navigate",
+                        "label": item.label,
+                        "href": item.href,
+                    }
+                )
+            elif item.type == "ask" and item.value:
+                validated.append(
+                    {
+                        "type": "ask",
+                        "label": item.label,
+                        "value": item.value,
+                    }
+                )
+
+        if validated:
+            return validated
+
+        return [
+            {"type": "navigate", "label": "대출 상품 보기", "href": "/loan/products"},
+            {"type": "navigate", "label": "상담 기록 보기", "href": "/help/chat-history"},
+        ]
+
+    async def stream_answer(
+        self,
+        message: str,
+        user_info: dict,
+        access_token: str,
+    ) -> AsyncGenerator[str, None]:
         member_id = user_info.get("member_id")
         name = user_info.get("name", "고객")
         credit = user_info.get("creditScore", 0)
@@ -120,7 +220,7 @@ class ChatService:
         # 1. 도구(Tools) 정의: session_id와 member_id를 사용하기 위해 함수 내부에 선언
         @tool
         async def search_loan_info(query: str) -> str:
-            """NUDGEBANK의 대출 상품, 금리, 조건 등에 대한 구체적인 지식이 필요할 때 이 도구를 사용하세요."""
+            """NUDGEBANK의 대출 상품, 금리, 조건, 신청 관련 정보에 대한 구체적인 지식이 필요할 때 이 도구를 사용하세요."""
             print(f"[Agent Tool Call] 🔍 대출 문서 검색 중: {query}") #LLM이 만든 쿼리와 비교
             query_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(query).tolist())
             context = await loop.run_in_executor(None, self.vector_repository.search_documents, query_embedding)
@@ -154,10 +254,12 @@ class ChatService:
         tools = [search_loan_info, search_past_chat, check_loan_eligibility]
 
         # 2. 시스템 프롬프트(페르소나) 정의
-        system_prompt = f"""당신은 NUDGEBANK 금융 상담 AI NUDGEBOT입니다.
+        system_prompt = f"""
+당신은 NUDGEBANK 금융 상담 AI NUDGEBOT입니다.
 답변은 도구를 활용하여 정확하지만 자연스럽게 답변하세요.
 정확한 정보 제공을 위해 필요하다면 반드시 제공된 검색 도구(대출 정보 검색, 과거 대화 검색, 대출 가능 여부 조회)를 활용하세요.
 검색 도구를 사용한 후에도 관련된 내용을 찾을 수 없다면, 임의로 지어내지 말고 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요.
+사용자 이름은 {name}이고, 현재 신용점수는 {credit}점입니다.
 """.strip()
 
         # 3. Agent 생성
@@ -191,11 +293,13 @@ class ChatService:
 
                 content = chunk.content
                 if isinstance(content, list):
-                    content = "".join([c.get("text", "") for c in content if isinstance(c, dict)])
+                    content = "".join(
+                        [c.get("text", "") for c in content if isinstance(c, dict)]
+                    )
 
                 if content:
                     bot_chunks.append(content)
-                    yield content
+                    yield to_sse("chunk", {"text": content})
 
             # 스트리밍 완료 후 봇 메시지 DB 저장
             bot_message = "".join(bot_chunks).strip()
@@ -203,14 +307,29 @@ class ChatService:
                 await loop.run_in_executor(
                     None,
                     self._save_chat_message,
-                    session_id, "BOT", bot_message, None
+                    session_id,
+                    "BOT",
+                    bot_message,
+                    None,
                 )
+
+            quick_replies = await self._infer_next_actions(message, bot_message)
+            yield to_sse(
+                "done",
+                {
+                    "answer": bot_message,
+                    "quickReplies": quick_replies,
+                },
+            )
 
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             print(f"Error in stream_answer: {exc}")
-            yield "죄송합니다. 답변을 생성하는 중에 오류가 발생했습니다."
+            yield to_sse(
+                "error",
+                {"message": "죄송합니다. 응답 생성 중 오류가 발생했습니다."},
+            )
 
     def _get_user_profile(self, member_id: int):
         return self.chat_repository.get_user_profile(member_id)
@@ -226,6 +345,6 @@ class ChatService:
 
     def delete_chat_session(self, member_id: int, session_id: str) -> None:
         self.chat_repository.delete_chat_session(member_id, session_id)
-        return
+
 
 chat_service = ChatService()
