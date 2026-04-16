@@ -57,3 +57,9 @@ class RagDeleteResponse(BaseModel):
     message: str
     deleted_chunks: int
     logs: list[str]
+class LoanEligibilityResponse(BaseModel):
+    eligible: bool
+    decision: str
+    creditScore: int
+    productKey: str
+    reasons: list[str]

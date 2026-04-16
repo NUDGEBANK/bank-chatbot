@@ -1,17 +1,65 @@
-import asyncio
+import asyncio, httpx
+import os
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.tools import tool
+from fastapi import HTTPException
 from langchain.agents import create_agent
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from sentence_transformers import SentenceTransformer
 
 from .repositories import ChatRepository, VectorRepository
+from .schemas import LoanEligibilityResponse
 
 load_dotenv()
 
+BANK_BACKEND_URL = os.getenv("BANK_BACKEND_URL", "http://localhost:9999")
+
+async def fetch_loan_eligibility(
+    access_token: str,
+    product_key: str,
+) -> LoanEligibilityResponse:
+    if not access_token:
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED")
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        response = await client.post(
+            f"{BANK_BACKEND_URL}/api/loan-products/eligibility",
+            json={"productKey": product_key},
+            headers={"Cookie": f"AT={access_token}"},
+        )
+
+    if response.status_code == 401:
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED")
+
+    if response.status_code >= 400:
+        try:
+            error_body = response.json()
+        except Exception:
+            error_body = {"message": response.text}
+
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=error_body.get("message", "대출 가능 여부 조회에 실패했습니다."),
+        )
+
+    return LoanEligibilityResponse(**response.json())
+
+
+def build_eligibility_answer(data: LoanEligibilityResponse) -> str:
+    if data.eligible:
+        return (
+            f"현재 내부 신용점수는 {data.creditScore}점입니다. "
+            "대출 가능 기준을 충족해 신청 가능합니다."
+        )
+
+    reason = data.reasons[0] if data.reasons else "대출 기준을 충족하지 않았습니다."
+    return (
+        f"현재 내부 신용점수는 {data.creditScore}점입니다. "
+        f"{reason}"
+    )
 
 class ChatService:
     def __init__(self):
@@ -54,7 +102,7 @@ class ChatService:
     def _save_chat_message(self, session_id: str, sender_type: str, message_content: str, embedding: list[float] | None = None) -> None:
         self.chat_repository.save_chat_message(session_id, sender_type, message_content, embedding)
 
-    async def stream_answer(self, message: str, user_info: dict) -> AsyncGenerator[str, None]:
+    async def stream_answer(self, message: str, user_info: dict, access_token: str,) -> AsyncGenerator[str, None]:
         member_id = user_info.get("member_id")
         name = user_info.get("name", "고객")
         credit = user_info.get("creditScore", 0)
@@ -89,15 +137,28 @@ class ChatService:
             print(f"[📃대화 RAG (past_context)]:\n{past_context}")
             return past_context
 
+        @tool
+        async def check_loan_eligibility(product_key: str) -> str:
+            """특정 상품의 대출 가능 여부를 실시간 조회한다. product_key는 youth-loan(자기계발 대출), consumption-loan(소비분석 대출), situate-loan(비상금 대출) 중 하나다."""
+            print(f"[Agent Tool Call] 🔎 대출 가능 여부 조회 중: {product_key}")
+
+            data = await fetch_loan_eligibility(
+                access_token=access_token,
+                product_key=product_key,
+            )
+            api_context = build_eligibility_answer(data)
+            print(f"[대출 가능 여부 API 결과]:\n{api_context}")
+            return api_context
+
         # 에이전트가 사용할 도구 목록
-        tools = [search_loan_info, search_past_chat]
+        tools = [search_loan_info, search_past_chat, check_loan_eligibility]
 
         # 2. 시스템 프롬프트(페르소나) 정의
         system_prompt = f"""당신은 NUDGEBANK 금융 상담 AI NUDGEBOT입니다.
-사용자의 이름은 {name}이며, 신용점수는 {credit}입니다.
-답변은 핵심만 간단명료하게 작성하세요.
-정확한 정보 제공을 위해 필요하다면 반드시 제공된 검색 도구(대출 정보 검색, 과거 대화 검색)를 활용하세요.
-검색 도구를 사용한 후에도 관련된 내용을 찾을 수 없다면, 임의로 지어내지 말고 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요."""
+답변은 도구를 활용하여 정확하지만 자연스럽게 답변하세요.
+정확한 정보 제공을 위해 필요하다면 반드시 제공된 검색 도구(대출 정보 검색, 과거 대화 검색, 대출 가능 여부 조회)를 활용하세요.
+검색 도구를 사용한 후에도 관련된 내용을 찾을 수 없다면, 임의로 지어내지 말고 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요.
+""".strip()
 
         # 3. Agent 생성
         agent = create_agent(
@@ -107,36 +168,43 @@ class ChatService:
         )
 
         try:
-            
-            
+
+
             # 기존 대화 기록 로드
             history = await loop.run_in_executor(None, self._build_history_messages, session_id)
             print(f"[📃대화 기록 (history)]:\n{history}")
 
             # 사용자 메시지 DB 저장
             await loop.run_in_executor(None, self._save_chat_message, session_id, "USER", message, user_msg_embedding)
-            
+
             input_messages = history + [HumanMessage(content=message)]
 
             # 4. Agent 실행 및 스트리밍 처리
             async for event in agent.astream_events({"messages": input_messages}, version="v2"):
                 # on_chat_model_stream 이벤트에서만 텍스트를 추출
-                if event["event"] == "on_chat_model_stream":
-                    chunk = event["data"]["chunk"]
-                    
-                    # 도구 호출(tool_calls) 데이터가 없고 순수 텍스트(content)만 있을 때 스트리밍
-                    if chunk.content and not chunk.tool_calls:
-                        content = chunk.content
-                        if isinstance(content, list):
-                            content = "".join([c.get("text", "") for c in content if isinstance(c, dict)])
-                        
-                        bot_chunks.append(content)
-                        yield content
+                if event["event"] != "on_chat_model_stream":
+                    continue
+                chunk = event["data"]["chunk"]
+                # 도구 호출(tool_calls) 데이터가 없고 순수 텍스트(content)만 있을 때 스트리밍
+                if not chunk.content or chunk.tool_calls:
+                    continue
+
+                content = chunk.content
+                if isinstance(content, list):
+                    content = "".join([c.get("text", "") for c in content if isinstance(c, dict)])
+
+                if content:
+                    bot_chunks.append(content)
+                    yield content
 
             # 스트리밍 완료 후 봇 메시지 DB 저장
             bot_message = "".join(bot_chunks).strip()
             if bot_message:
-                await loop.run_in_executor(None, self._save_chat_message, session_id, "BOT", bot_message, None)
+                await loop.run_in_executor(
+                    None,
+                    self._save_chat_message,
+                    session_id, "BOT", bot_message, None
+                )
 
         except asyncio.CancelledError:
             raise
@@ -158,6 +226,6 @@ class ChatService:
 
     def delete_chat_session(self, member_id: int, session_id: str) -> None:
         self.chat_repository.delete_chat_session(member_id, session_id)
-
+        return
 
 chat_service = ChatService()
