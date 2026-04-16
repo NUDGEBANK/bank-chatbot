@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from .rag_admin_stream import RagAdminService
+from .rag_manager import RagAdminService
 from .schemas import (
     ChatRequest,
     ChatResponse,
