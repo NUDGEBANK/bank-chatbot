@@ -3,6 +3,11 @@ import os
 
 import jwt
 from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+
+from .schemas import ChatRequest, ChatSessionDetail, ChatSessionSummary
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -66,7 +71,7 @@ def extract_member_id_from_cookie(request: Request) -> int:
         raise HTTPException(status_code=401, detail="Invalid token") from exc
 
 
-@app.post("/chat-api/chat", response_model=ChatResponse)
+@app.post("/chat-api/chat")
 async def chat(req: ChatRequest, request: Request):
     member_id = extract_member_id_from_cookie(request)
     access_token = request.cookies.get("AT")
@@ -103,8 +108,12 @@ async def chat(req: ChatRequest, request: Request):
             user_info=req.user_info,
             access_token=access_token,
         ),
-        media_type="text/plain; charset=utf-8",
-        headers={"X-Chat-Session-Id": session_id},
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Chat-Session-Id": session_id,
+        },
     )
 
 
