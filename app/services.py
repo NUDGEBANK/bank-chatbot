@@ -217,10 +217,12 @@ class ChatService:
         bot_chunks: list[str] = []
         loop = asyncio.get_event_loop()
 
+        # 사용자 쿼리 임베딩
         user_msg_embedding = await loop.run_in_executor(
             None, lambda: self.embed_model.encode(message).tolist()
         )
 
+        # 1. 도구(Tools) 정의: session_id와 member_id를 사용하기 위해 함수 내부에 선언
         @tool
         async def get_user_profile() -> str:
             """사용자 이름이나 현재 신용점수 등 개인 프로필 정보가 필요할 때 사용하세요."""
@@ -256,6 +258,7 @@ class ChatService:
             )
             return build_eligibility_answer(data)
 
+        # 에이전트가 사용할 도구 목록
         tools = [
             get_user_profile,
             search_loan_info,
@@ -271,6 +274,7 @@ class ChatService:
 검색 도구를 사용한 후에도 관련 내용을 찾을 수 없다면, 임의로 지어내지 말고 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요.
 """.strip()
 
+        # 3. Agent 생성
         agent = create_agent(
             model=self.llm,
             tools=tools,
