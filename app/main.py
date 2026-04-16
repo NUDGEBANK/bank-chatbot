@@ -3,20 +3,26 @@ import os
 
 import jwt
 from dotenv import load_dotenv
-from fastapi import Cookie, FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from typing import Optional
-
-from .schemas import ChatRequest, ChatResponse, ChatSessionDetail, ChatSessionSummary
-from .services import (
-    chat_service,
+from .rag_manager import RagAdminService
+from .schemas import (
+    ChatRequest,
+    ChatResponse,
+    ChatSessionDetail,
+    ChatSessionSummary,
+    RagDeleteResponse,
+    RagDocumentSummary,
+    RagIngestResponse,
 )
+from .services import chat_service
 
 load_dotenv()
 
 app = FastAPI()
+rag_admin_service = RagAdminService(chat_service.embed_model)
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
@@ -155,3 +161,39 @@ def delete_chat_session(session_id: str, request: Request):
     except Exception as exc:
         print(f"delete_chat_session error: {exc}")
         raise HTTPException(status_code=500, detail="Failed to delete chat session") from exc
+
+
+@app.get("/chat-api/admin/ragdocs", response_model=list[RagDocumentSummary])
+def list_rag_documents():
+    try:
+        return rag_admin_service.list_documents()
+    except Exception as exc:
+        print(f"list_rag_documents error: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to load rag documents") from exc
+
+
+@app.post("/chat-api/admin/ragdocs/ingest")
+async def ingest_rag_document(
+    file: UploadFile = File(...),
+    loan_product_id: int | None = Form(default=None),
+    overwrite_confirmed: bool = Form(default=False),
+):
+    return StreamingResponse(
+        rag_admin_service.stream_ingest_pdf(
+            upload_file=file,
+            requested_product_id=loan_product_id,
+            overwrite_confirmed=overwrite_confirmed,
+        ),
+        media_type="application/x-ndjson; charset=utf-8",
+    )
+
+
+@app.delete("/chat-api/admin/ragdocs/{loan_product_id}", response_model=RagDeleteResponse)
+def delete_rag_document(loan_product_id: int):
+    try:
+        return rag_admin_service.delete_document(loan_product_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        print(f"delete_rag_document error: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to delete rag document") from exc
