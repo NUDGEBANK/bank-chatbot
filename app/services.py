@@ -1,4 +1,7 @@
-import asyncio, httpx, os, json
+import asyncio
+import httpx
+import json
+import os
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
@@ -74,13 +77,13 @@ async def fetch_loan_eligibility(
 def build_eligibility_answer(data: LoanEligibilityResponse) -> str:
     if data.eligible:
         return (
-            f"현재 내부 신용점수는 {data.creditScore}점입니다. "
-            "대출 가능 기준을 충족해 신청 가능합니다."
+            f"현재 회원 신용점수는 {data.creditScore}점입니다. "
+            "대출 가능 기준을 충족하므로 신청 가능합니다."
         )
 
-    reason = data.reasons[0] if data.reasons else "대출 기준을 충족하지 않았습니다."
+    reason = data.reasons[0] if data.reasons else "대출 기준을 충족하지 않습니다."
     return (
-        f"현재 내부 신용점수는 {data.creditScore}점입니다. "
+        f"현재 회원 신용점수는 {data.creditScore}점입니다. "
         f"{reason}"
     )
 
@@ -214,10 +217,15 @@ class ChatService:
         bot_chunks: list[str] = []
         loop = asyncio.get_event_loop()
 
-        # 사용자 쿼리 임베딩
-        user_msg_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(message).tolist())
+        user_msg_embedding = await loop.run_in_executor(
+            None, lambda: self.embed_model.encode(message).tolist()
+        )
 
-        # 1. 도구(Tools) 정의: session_id와 member_id를 사용하기 위해 함수 내부에 선언
+        @tool
+        async def get_user_profile() -> str:
+            """사용자 이름이나 현재 신용점수 등 개인 프로필 정보가 필요할 때 사용하세요."""
+            return f"사용자 이름은 {name}이고, 현재 신용점수는 {credit}점입니다."
+
         @tool
         async def search_loan_info(query: str) -> str:
             """NUDGEBANK의 대출 상품, 금리, 조건, 신청 관련 정보에 대한 구체적인 지식이 필요할 때 이 도구를 사용하세요."""
@@ -246,23 +254,23 @@ class ChatService:
                 access_token=access_token,
                 product_key=product_key,
             )
-            api_context = build_eligibility_answer(data)
-            print(f"[대출 가능 여부 API 결과]:\n{api_context}")
-            return api_context
+            return build_eligibility_answer(data)
 
-        # 에이전트가 사용할 도구 목록
-        tools = [search_loan_info, search_past_chat, check_loan_eligibility]
-
+        tools = [
+            get_user_profile,
+            search_loan_info,
+            search_past_chat,
+            check_loan_eligibility,
+        ]
         # 2. 시스템 프롬프트(페르소나) 정의
-        system_prompt = f"""
+        system_prompt = """
 당신은 NUDGEBANK 금융 상담 AI NUDGEBOT입니다.
 답변은 도구를 활용하여 정확하지만 자연스럽게 답변하세요.
-정확한 정보 제공을 위해 필요하다면 반드시 제공된 검색 도구(대출 정보 검색, 과거 대화 검색, 대출 가능 여부 조회)를 활용하세요.
-검색 도구를 사용한 후에도 관련된 내용을 찾을 수 없다면, 임의로 지어내지 말고 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요.
-사용자 이름은 {name}이고, 현재 신용점수는 {credit}점입니다.
+정확한 정보 제공을 위해 필요하다면 반드시 제공된 도구를 사용하세요.
+특히 사용자 이름, 신용점수 같은 개인 정보가 필요하면 get_user_profile 도구를 사용하세요.
+검색 도구를 사용한 후에도 관련 내용을 찾을 수 없다면, 임의로 지어내지 말고 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요.
 """.strip()
 
-        # 3. Agent 생성
         agent = create_agent(
             model=self.llm,
             tools=tools,
