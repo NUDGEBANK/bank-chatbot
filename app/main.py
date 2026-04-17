@@ -76,12 +76,12 @@ async def chat(req: ChatRequest, request: Request):
     member_id = extract_member_id_from_cookie(request)
     access_token = request.cookies.get("AT")
 
-    req.user_info["member_id"] = member_id
+    user_info = {"member_id": member_id}
 
     try:
         profile = chat_service._get_user_profile(member_id)
-        req.user_info["name"] = profile["name"]
-        req.user_info["creditScore"] = profile["credit"]
+        user_info["name"] = profile["name"]
+        user_info["creditScore"] = profile["credit"]
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
@@ -100,12 +100,12 @@ async def chat(req: ChatRequest, request: Request):
         print(f"prepare_chat_session error: {exc}")
         raise HTTPException(status_code=500, detail="Failed to prepare chat session") from exc
 
-    req.user_info["session_id"] = session_id
+    user_info["session_id"] = session_id
 
     return StreamingResponse(
         chat_service.stream_answer(
             message=req.message,
-            user_info=req.user_info,
+            user_info=user_info,
             access_token=access_token,
         ),
         media_type="text/event-stream",

@@ -31,13 +31,22 @@ class SuggestedActionBundle(BaseModel):
 
 AVAILABLE_PAGES = [
     {"href": "/", "label": "홈으로 이동"},
-    {"href": "/loan/products", "label": "대출 상품 보기"},
-    {"href": "/loan/apply-guide", "label": "대출 신청 안내 보기"},
-    {"href": "/deposit/products", "label": "예적금 상품 보기"},
-    {"href": "/card/ddokgae", "label": "똑개 카드 보기"},
-    {"href": "/card/spending-analysis", "label": "소비 분석 보기"},
-    {"href": "/account/ddokgae", "label": "똑개 통장 보기"},
-    {"href": "/help/chat-history", "label": "상담 기록 보기"},
+
+    {"href": "/about", "label": "은행 소개로 이동"},
+
+    {"href": "/deposit/products", "label": "예적금 상품 보기로 이동"},
+    {"href": "/deposit/management", "label": "예적금 관리로 이동"},
+
+    {"href": "/loan/products", "label": "대출 상품 보기로 이동"},
+    {"href": "/loan/apply-guide", "label": "대출 신청 안내 보기로 이동"},
+    {"href": "/loan/management", "label": "내 대출 관리로 이동"},
+    {"href": "/loan/credit-score", "label": "신용 평가로 이동"},
+    
+    {"href": "/card/nudgecard", "label": "넛지 카드 보기로 이동"},
+    {"href": "/card/history", "label": "카드 이용 내역으로 이동"},
+    {"href": "/card/spending-analysis", "label": "소비 분석으로 이동"},
+
+    {"href": "/help/chat-history", "label": "상담 기록 보기로 이동"},
 ]
 
 async def fetch_loan_eligibility(
@@ -193,7 +202,7 @@ class ChatService:
         @tool(args_schema=SuggestedActionBundle)
         async def suggest_quick_replies(quickReplies: list[SuggestedAction]) -> str:
             """
-            모든 텍스트 답변 작성이 완전히 끝난 직후, 사용자가 이어서 할 법한 질문이나 이동할 페이지를 2~3개 추천하기 위해 이 도구를 반드시 호출하세요.
+            모든 텍스트 답변 작성이 완전히 끝난 직후, 사용자가 이어서 할 법한 질문이나 이동할 페이지를 1~3개 추천하기 위해 이 도구를 호출하세요.
             """
             return "추천 행동이 전송되었습니다. 더 이상 텍스트를 출력하지 말고 대화를 종료하세요."
 
@@ -213,7 +222,7 @@ class ChatService:
 정확한 정보 제공을 위해 필요하다면 반드시 제공된 도구를 사용하세요.
 
 [중요: 퀵 리플라이 필수 제안]
-답변을 모두 마친 후, 대화를 종료하기 직전에 반드시 `suggest_quick_replies` 도구를 호출하여 추천 액션(Quick Replies)을 2~3개 제안하세요.
+답변을 모두 마친 후, 대화를 종료하기 직전에 `suggest_quick_replies` 도구를 호출하여 추천 액션(Quick Replies)을 1~3개 제안하세요.
 - type은 'ask' (질문하기) 또는 'navigate' (페이지 이동) 중 하나여야 합니다.
 - navigate 타입 사용 시 반드시 아래의 경로(href) 중 하나만 사용하세요:
 {available_pages_str}
@@ -281,11 +290,11 @@ class ChatService:
                 )
 
             # 만약 에이전트가 툴 호출을 누락했거나 형식이 잘못된 경우 기본값 세팅
-            if not extracted_quick_replies:
-                extracted_quick_replies = [
-                    {"type": "navigate", "label": "대출 상품 보기", "href": "/loan/products"},
-                    {"type": "navigate", "label": "상담 기록 보기", "href": "/help/chat-history"},
-                ]
+            # if not extracted_quick_replies:
+            #     extracted_quick_replies = [
+            #         {"type": "navigate", "label": "대출 상품 보기", "href": "/loan/products"},
+            #         {"type": "navigate", "label": "상담 기록 보기", "href": "/help/chat-history"},
+            #     ]
 
             # 최종적으로 'done' 이벤트에 텍스트와 퀵 리플라이를 함께 반환
             yield to_sse(
