@@ -181,7 +181,7 @@ class ChatService:
 
         @tool
         async def check_loan_eligibility(product_key: str) -> str:
-            """특정 상품의 대출 가능 여부를 실시간 조회한다. product_key는 youth-loan(자기계발 대출), consumption-loan(소비분석 대출), situate-loan(비상금 대출) 중 하나다."""
+            """특정 상품의 대출 가능 여부를 실시간 조회한다. product_key는 youth-loan(자기계발 대출), consumption-loan(넛지 대출), situate-loan(비상금 대출) 중 하나다."""
             print(f"[Agent Tool Call] 🔎 대출 가능 여부 조회 중: {product_key}")
             data = await fetch_loan_eligibility(
                 access_token=access_token,
