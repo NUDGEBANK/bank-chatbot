@@ -26,10 +26,8 @@ class SuggestedAction(BaseModel):
     value: str | None = None
     href: str | None = None
 
-
 class SuggestedActionBundle(BaseModel):
     quickReplies: list[SuggestedAction]
-
 
 AVAILABLE_PAGES = [
     {"href": "/", "label": "홈으로 이동"},
@@ -41,7 +39,6 @@ AVAILABLE_PAGES = [
     {"href": "/account/ddokgae", "label": "똑개 통장 보기"},
     {"href": "/help/chat-history", "label": "상담 기록 보기"},
 ]
-
 
 async def fetch_loan_eligibility(
     access_token: str,
@@ -73,7 +70,6 @@ async def fetch_loan_eligibility(
 
     return LoanEligibilityResponse(**response.json())
 
-
 def build_eligibility_answer(data: LoanEligibilityResponse) -> str:
     if data.eligible:
         return (
@@ -87,7 +83,6 @@ def build_eligibility_answer(data: LoanEligibilityResponse) -> str:
         f"{reason}"
     )
 
-
 def to_sse(event_type: str, payload: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
@@ -97,17 +92,12 @@ class ChatService:
         self.vector_repository = VectorRepository()
         self.embed_model = SentenceTransformer("jhgan/ko-sroberta-multitask")
 
-        # Agent의 판단력을 높이기 위해 gpt-4o-mini 모델 유지
+        # 이제 action_llm은 필요하지 않으므로 하나의 LLM만 유지합니다.
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
             max_tokens=500,
             streaming=True,
-        )
-        self.action_llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0,
-            max_tokens=250,
         )
 
     def _load_session_messages(self, session_id: str) -> list[tuple[str, str]]:
@@ -143,63 +133,6 @@ class ChatService:
     ) -> None:
         self.chat_repository.save_chat_message(session_id, sender_type, message_content, embedding)
 
-    async def _infer_next_actions(
-        self,
-        user_message: str,
-        bot_message: str,
-    ) -> list[dict]:
-        prompt = f"""
-너는 NUDGEBANK 챗봇의 다음 행동 추천기다.
-사용자 질문과 최종 답변을 보고, 다음에 누르면 좋은 버튼을 최대 3개 추천해라.
-
-규칙:
-- 버튼 타입은 ask 또는 navigate 둘 중 하나만 사용
-- navigate는 반드시 아래 경로만 사용
-- ask는 자연스러운 다음 질문이어야 함
-- 현재 답변과 직접 이어지는 행동만 추천
-- 중복 금지
-- 한국어로 작성
-
-사용 가능한 이동 경로:
-{json.dumps(AVAILABLE_PAGES, ensure_ascii=False)}
-
-사용자 질문:
-{user_message}
-
-최종 답변:
-{bot_message}
-""".strip()
-
-        structured = self.action_llm.with_structured_output(SuggestedActionBundle)
-        result = await structured.ainvoke(prompt)
-
-        validated: list[dict] = []
-        for item in result.quickReplies[:3]:
-            if item.type == "navigate" and item.href:
-                validated.append(
-                    {
-                        "type": "navigate",
-                        "label": item.label,
-                        "href": item.href,
-                    }
-                )
-            elif item.type == "ask" and item.value:
-                validated.append(
-                    {
-                        "type": "ask",
-                        "label": item.label,
-                        "value": item.value,
-                    }
-                )
-
-        if validated:
-            return validated
-
-        return [
-            {"type": "navigate", "label": "대출 상품 보기", "href": "/loan/products"},
-            {"type": "navigate", "label": "상담 기록 보기", "href": "/help/chat-history"},
-        ]
-
     async def stream_answer(
         self,
         message: str,
@@ -215,6 +148,7 @@ class ChatService:
             raise ValueError("session_id and member_id are required")
 
         bot_chunks: list[str] = []
+        extracted_quick_replies: list[dict] = []
         loop = asyncio.get_event_loop()
 
         # 사용자 쿼리 임베딩
@@ -222,7 +156,7 @@ class ChatService:
             None, lambda: self.embed_model.encode(message).tolist()
         )
 
-        # 1. 도구(Tools) 정의: session_id와 member_id를 사용하기 위해 함수 내부에 선언
+        # 1. 도구(Tools) 정의
         @tool
         async def get_user_profile() -> str:
             """사용자 이름이나 현재 신용점수 등 개인 프로필 정보가 필요할 때 사용하세요."""
@@ -231,7 +165,7 @@ class ChatService:
         @tool
         async def search_loan_info(query: str) -> str:
             """NUDGEBANK의 대출 상품, 금리, 조건, 신청 관련 정보에 대한 구체적인 지식이 필요할 때 이 도구를 사용하세요."""
-            print(f"[Agent Tool Call] 🔍 대출 문서 검색 중: {query}") #LLM이 만든 쿼리와 비교
+            print(f"[Agent Tool Call] 🔍 대출 문서 검색 중: {query}")
             query_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(query).tolist())
             context = await loop.run_in_executor(None, self.vector_repository.search_documents, query_embedding)
             print(f"[문서 내용 (Doc RAG)]:\n{context}")
@@ -240,9 +174,7 @@ class ChatService:
         @tool
         async def search_past_chat(query: str) -> str:
             """과거에 사용자와 나누었던 대화 기록이나 문맥을 확인해야 할 때 이 도구를 사용하세요."""
-            # print(f"[Agent Tool Call] 🗂️ 과거 대화 검색 중: {query}")
-            print(f"[Agent Tool Call] 🗂️ 과거 대화 검색 중: {message}") #유저 원문 메세지와 비교
-            # query_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(query).tolist())
+            print(f"[Agent Tool Call] 🗂️ 과거 대화 검색 중: {message}")
             past_context = await loop.run_in_executor(None, self.chat_repository.search_past_conversations, member_id, session_id, user_msg_embedding)
             print(f"[📃대화 RAG (past_context)]:\n{past_context}")
             return past_context
@@ -251,27 +183,40 @@ class ChatService:
         async def check_loan_eligibility(product_key: str) -> str:
             """특정 상품의 대출 가능 여부를 실시간 조회한다. product_key는 youth-loan(자기계발 대출), consumption-loan(소비분석 대출), situate-loan(비상금 대출) 중 하나다."""
             print(f"[Agent Tool Call] 🔎 대출 가능 여부 조회 중: {product_key}")
-
             data = await fetch_loan_eligibility(
                 access_token=access_token,
                 product_key=product_key,
             )
             return build_eligibility_answer(data)
 
-        # 에이전트가 사용할 도구 목록
+        # [NEW] 퀵 리플라이 생성을 위한 도구 추가
+        @tool(args_schema=SuggestedActionBundle)
+        async def suggest_quick_replies(quickReplies: list[SuggestedAction]) -> str:
+            """
+            모든 텍스트 답변 작성이 완전히 끝난 직후, 사용자가 이어서 할 법한 질문이나 이동할 페이지를 2~3개 추천하기 위해 이 도구를 반드시 호출하세요.
+            """
+            return "추천 행동이 전송되었습니다. 더 이상 텍스트를 출력하지 말고 대화를 종료하세요."
+
         tools = [
             get_user_profile,
             search_loan_info,
             search_past_chat,
             check_loan_eligibility,
+            suggest_quick_replies # 도구 목록에 추가
         ]
-        # 2. 시스템 프롬프트(페르소나) 정의
-        system_prompt = """
+
+        # 2. 시스템 프롬프트(페르소나) 업데이트
+        available_pages_str = json.dumps(AVAILABLE_PAGES, ensure_ascii=False)
+        system_prompt = f"""
 당신은 NUDGEBANK 금융 상담 AI NUDGEBOT입니다.
 답변은 도구를 활용하여 정확하지만 자연스럽게 답변하세요.
 정확한 정보 제공을 위해 필요하다면 반드시 제공된 도구를 사용하세요.
-특히 사용자 이름, 신용점수 같은 개인 정보가 필요하면 get_user_profile 도구를 사용하세요.
-검색 도구를 사용한 후에도 관련 내용을 찾을 수 없다면, 임의로 지어내지 말고 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요.
+
+[중요: 퀵 리플라이 필수 제안]
+답변을 모두 마친 후, 대화를 종료하기 직전에 반드시 `suggest_quick_replies` 도구를 호출하여 추천 액션(Quick Replies)을 2~3개 제안하세요.
+- type은 'ask' (질문하기) 또는 'navigate' (페이지 이동) 중 하나여야 합니다.
+- navigate 타입 사용 시 반드시 아래의 경로(href) 중 하나만 사용하세요:
+{available_pages_str}
 """.strip()
 
         # 3. Agent 생성
@@ -282,38 +227,48 @@ class ChatService:
         )
 
         try:
-
-
-            # 기존 대화 기록 로드
             history = await loop.run_in_executor(None, self._build_history_messages, session_id)
             print(f"[📃대화 기록 (history)]:\n{history}")
 
-            # 사용자 메시지 DB 저장
             await loop.run_in_executor(None, self._save_chat_message, session_id, "USER", message, user_msg_embedding)
 
             input_messages = history + [HumanMessage(content=message)]
 
-            # 4. Agent 실행 및 스트리밍 처리
+            # 4. Agent 실행 및 스트리밍 (이벤트 가로채기)
             async for event in agent.astream_events({"messages": input_messages}, version="v2"):
-                # on_chat_model_stream 이벤트에서만 텍스트를 추출
-                if event["event"] != "on_chat_model_stream":
-                    continue
-                chunk = event["data"]["chunk"]
-                # 도구 호출(tool_calls) 데이터가 없고 순수 텍스트(content)만 있을 때 스트리밍
-                if not chunk.content or chunk.tool_calls:
-                    continue
+                
+                # 일반 텍스트 스트리밍
+                if event["event"] == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"]
+                    if not chunk.content or chunk.tool_calls:
+                        continue
 
-                content = chunk.content
-                if isinstance(content, list):
-                    content = "".join(
-                        [c.get("text", "") for c in content if isinstance(c, dict)]
-                    )
+                    content = chunk.content
+                    if isinstance(content, list):
+                        content = "".join([c.get("text", "") for c in content if isinstance(c, dict)])
 
-                if content:
-                    bot_chunks.append(content)
-                    yield to_sse("chunk", {"text": content})
+                    if content:
+                        bot_chunks.append(content)
+                        yield to_sse("chunk", {"text": content})
 
-            # 스트리밍 완료 후 봇 메시지 DB 저장
+                # [NEW] 도구 호출을 가로채서 퀵 리플라이 데이터 추출
+                elif event["event"] == "on_tool_start" and event["name"] == "suggest_quick_replies":
+                    tool_input = event["data"].get("input", {})
+                    # args_schema에 의해 배열로 전달된 데이터를 추출
+                    qr_data = tool_input.get("quickReplies", [])
+                    
+                    for item in qr_data:
+                        # Pydantic 모델 형태이거나 Dict 형태일 수 있으므로 안전하게 변환
+                        qr_dict = item if isinstance(item, dict) else item.dict()
+                        
+                        # 유효성 검증
+                        t = qr_dict.get("type")
+                        if t == "navigate" and qr_dict.get("href"):
+                            extracted_quick_replies.append(qr_dict)
+                        elif t == "ask" and qr_dict.get("value"):
+                            extracted_quick_replies.append(qr_dict)
+
+            # 스트리밍 완료 후 봇 메시지 DB 저장 (텍스트만 깔끔하게 저장됨)
             bot_message = "".join(bot_chunks).strip()
             if bot_message:
                 await loop.run_in_executor(
@@ -325,12 +280,19 @@ class ChatService:
                     None,
                 )
 
-            quick_replies = await self._infer_next_actions(message, bot_message)
+            # 만약 에이전트가 툴 호출을 누락했거나 형식이 잘못된 경우 기본값 세팅
+            if not extracted_quick_replies:
+                extracted_quick_replies = [
+                    {"type": "navigate", "label": "대출 상품 보기", "href": "/loan/products"},
+                    {"type": "navigate", "label": "상담 기록 보기", "href": "/help/chat-history"},
+                ]
+
+            # 최종적으로 'done' 이벤트에 텍스트와 퀵 리플라이를 함께 반환
             yield to_sse(
                 "done",
                 {
                     "answer": bot_message,
-                    "quickReplies": quick_replies,
+                    "quickReplies": extracted_quick_replies,
                 },
             )
 
@@ -357,6 +319,5 @@ class ChatService:
 
     def delete_chat_session(self, member_id: int, session_id: str) -> None:
         self.chat_repository.delete_chat_session(member_id, session_id)
-
 
 chat_service = ChatService()
