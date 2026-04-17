@@ -282,7 +282,7 @@ class ChatService:
                     
                     for item in qr_data:
                         # Pydantic 모델 형태이거나 Dict 형태일 수 있으므로 안전하게 변환
-                        qr_dict = item if isinstance(item, dict) else item.dict()
+                        qr_dict = item if isinstance(item, dict) else item.model_dump()
                         
                         # 유효성 검증
                         t = qr_dict.get("type")
