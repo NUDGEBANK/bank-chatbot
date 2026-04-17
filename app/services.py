@@ -199,12 +199,12 @@ class ChatService:
             return build_eligibility_answer(data)
 
         # [NEW] 퀵 리플라이 생성을 위한 도구 추가
-        @tool(args_schema=SuggestedActionBundle)
+        @tool(args_schema=SuggestedActionBundle, return_direct=True)
         async def suggest_quick_replies(quickReplies: list[SuggestedAction]) -> str:
             """
             모든 텍스트 답변 작성이 완전히 끝난 직후, 사용자가 이어서 할 법한 질문이나 이동할 페이지를 1~3개 추천하기 위해 이 도구를 호출하세요.
             """
-            return "추천 행동이 전송되었습니다. 더 이상 텍스트를 출력하지 말고 대화를 종료하세요."
+            return "SUCCESS"
 
         tools = [
             get_user_profile,
