@@ -105,7 +105,7 @@ class ChatService:
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
-            max_tokens=500,
+            max_tokens=1000,
             streaming=True,
         )
 
@@ -234,6 +234,11 @@ class ChatService:
 도구를 통해 얻은 정보는 사전 학습된 정보보다 우선시되어야 합니다.
 
 답변 마지막에는 사용자가 이어서 할 만한 행동을 마크다운 링크로 제안하세요(ask 형식 최소 2개, navigate 형식 최소 1개).
+
+# Strict Guardrails (Out-of-Domain Policy)
+당신의 답변 범위는 오직 'NUDGEBANK의 서비스'로 엄격하게 제한됩니다. 
+무관한 질문(Out-of-Domain)이 들어올 경우 정중하게 거절하세요.
+단, 사용자가 "나는 누구야?", "내 정보 알려줘" 등 본인의 신원이나 상태를 묻는 질문은 '유저 정보' 요청으로 간주합니다.
 
 링크 규칙:
 1. 페이지 이동은 일반 내부 경로 마크다운 링크로 작성하세요. 예: [은행 소개로 이동](/about)
