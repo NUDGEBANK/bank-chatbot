@@ -201,7 +201,7 @@ class ChatService:
         # [수정된 퀵 리플라이 도구]
         available_pages_info = "\n".join([f"- {p['label']}: {p['href']}" for p in AVAILABLE_PAGES])
         
-        # 1. 설명을 f-string 변수로 먼저 뺍니다.
+        # suggest_quick_replies 설명
         quick_replies_description = f"""
         모든 텍스트 답변 작성이 완전히 끝난 직후, 대화를 종료하기 위해 이 도구를 호출하세요.
         이 아래로는 텍스트 출력 절대 금지
@@ -214,8 +214,7 @@ class ChatService:
         {available_pages_info}
         """
 
-        # 2. @tool 데코레이터의 description 파라미터로 명시적으로 전달합니다.
-        @tool(args_schema=SuggestedActionBundle, description=quick_replies_description)
+        @tool(args_schema=SuggestedActionBundle, description=quick_replies_description, return_direct=True)
         async def suggest_quick_replies(quickReplies: list[SuggestedAction]) -> str:
             return "SUCCESS"
 
