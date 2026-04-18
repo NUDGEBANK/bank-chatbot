@@ -198,34 +198,48 @@ class ChatService:
             )
             return build_eligibility_answer(data)
 
-        # [NEW] 퀵 리플라이 생성을 위한 도구 추가
-        @tool(args_schema=SuggestedActionBundle)
+        # [수정된 퀵 리플라이 도구]
+        available_pages_info = "\n".join([f"- {p['label']}: {p['href']}" for p in AVAILABLE_PAGES])
+        
+        # suggest_quick_replies 설명
+        quick_replies_description = f"""
+        모든 텍스트 답변 작성이 완전히 끝난 직후, 대화를 종료하기 위해 이 도구를 호출하세요.
+        이 아래로는 텍스트 출력 절대 금지
+        
+        [필수 생성 규칙]
+        1. 'ask' (후속 질문하기) 타입의 액션을 반드시 최소 2개 이상 포함하세요.
+        2. 'navigate' (페이지 이동) 타입의 액션을 포함할 경우, 반드시 아래 [허용된 이동 경로] 목록에 있는 href 값만 사용해야 합니다.
+        
+        [허용된 이동 경로]
+        {available_pages_info}
+        """
+
+        @tool(args_schema=SuggestedActionBundle, description=quick_replies_description, return_direct=True)
         async def suggest_quick_replies(quickReplies: list[SuggestedAction]) -> str:
-            """
-            모든 텍스트 답변 작성이 완전히 끝난 직후, 사용자가 이어서 할 법한 질문이나 이동할 페이지를 1~3개 추천하기 위해 이 도구를 호출하세요.
-            """
-            return "추천 행동이 전송되었습니다. 더 이상 텍스트를 출력하지 말고 대화를 종료하세요."
+            return "SUCCESS"
 
         tools = [
             get_user_profile,
             search_loan_info,
             search_past_chat,
             check_loan_eligibility,
-            suggest_quick_replies # 도구 목록에 추가
+            suggest_quick_replies
         ]
 
         # 2. 시스템 프롬프트(페르소나) 업데이트
-        available_pages_str = json.dumps(AVAILABLE_PAGES, ensure_ascii=False)
-        system_prompt = f"""
-당신은 NUDGEBANK 금융 상담 AI NUDGEBOT입니다.
-답변은 도구를 활용하여 정확하지만 자연스럽게 답변하세요.
+        system_prompt = """
+당신은 NUDGEBANK 금융 상담 AI agent NUDGEBOT입니다.
+답변은 도구를 활용하여 정확하게 하세요.
 정확한 정보 제공을 위해 필요하다면 반드시 제공된 도구를 사용하세요.
+도구를 통해 얻은 정보는 사전 학습된 정보보다 우선시되어야 합니다.
 
-[중요: 퀵 리플라이 필수 제안]
-답변을 모두 마친 후, 대화를 종료하기 직전에 `suggest_quick_replies` 도구를 호출하여 추천 액션(Quick Replies)을 1~3개 제안하세요.
-- type은 'ask' (질문하기) 또는 'navigate' (페이지 이동) 중 하나여야 합니다.
-- navigate 타입 사용 시 반드시 아래의 경로(href) 중 하나만 사용하세요:
-{available_pages_str}
+답변 마지막에는 사용자가 이어서 할 만한 행동을 마크다운 링크로 제안하세요(ask 형식 최소 2개, navigate 형식 최소 1개).
+
+링크 규칙:
+1. 페이지 이동은 일반 내부 경로 마크다운 링크로 작성하세요. 예: [은행 소개로 이동](/about)
+2. 이어서 질문하기는 반드시 #ask= 형식의 마크다운 링크로 작성하세요. 예: [대출 상품에 대해 알고 싶어요](#ask=대출%20상품에%20대해%20알고%20싶어요)
+3. #ask= 뒤에는 사용자가 실제로 보낼 질문 문장을 URL 인코딩해서 넣으세요.
+4. suggest_quick_replies, JSON, 함수 호출 형식, 코드블록은 본문에 출력하지 마세요.
 """.strip()
 
         # 3. Agent 생성
@@ -268,7 +282,7 @@ class ChatService:
                     
                     for item in qr_data:
                         # Pydantic 모델 형태이거나 Dict 형태일 수 있으므로 안전하게 변환
-                        qr_dict = item if isinstance(item, dict) else item.dict()
+                        qr_dict = item if isinstance(item, dict) else item.model_dump()
                         
                         # 유효성 검증
                         t = qr_dict.get("type")
