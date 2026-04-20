@@ -27,30 +27,74 @@ class ChatRepository:
             cur.close()
             conn.close()
 
+    # def search_past_conversations(
+    #     self, member_id: int, current_session_id: str, query_embedding: list[float], limit: int = 3) -> str:
+    #     #현재 세션의 최근 10개 메세지(History에 들어갈 내용)는 RAG 검색에서 제외
+    #     conn = get_db_connection()
+    #     cur = conn.cursor()
+    #     try:
+    #         cur.execute(
+    #             """
+    #             SELECT m.sender_type, m.message_content
+    #             FROM chat_messages m
+    #             JOIN chat_sessions s ON m.session_id = s.session_id
+    #             WHERE s.member_id = %s
+    #               AND m.embedding IS NOT NULL
+    #               AND m.message_id NOT IN (
+    #                   SELECT message_id 
+    #                   FROM chat_messages 
+    #                   WHERE session_id = %s 
+    #                   ORDER BY message_id DESC 
+    #                   LIMIT 10
+    #               )
+    #             ORDER BY m.embedding <=> %s::vector
+    #             LIMIT %s
+    #             """,
+    #             (member_id, current_session_id, query_embedding, limit),
+    #         )
+    #         rows = cur.fetchall()
+    #         return "\n".join([f"[{'사용자' if r[0]=='USER' else 'NUDGEBOT'}] {r[1]}" for r in rows])
+    #     finally:
+    #         cur.close()
+    #         conn.close()
+    
+    # 코사인 거리 필터링 하는 버전
     def search_past_conversations(
-        self, member_id: int, current_session_id: str, query_embedding: list[float], limit: int = 3) -> str:
+        self, member_id: int, current_session_id: str, query_embedding: list[float], limit: int = 10, distance_threshold: float = 0.7) -> str:
         #현재 세션의 최근 10개 메세지(History에 들어갈 내용)는 RAG 검색에서 제외
+        #코사인 거리 필터링: 임계값(0.3) 이하인==코사인유사도가 0.7 이상인, 즉 유사도가 높은 대화만 필터링
         conn = get_db_connection()
         cur = conn.cursor()
         try:
             cur.execute(
                 """
-                SELECT m.sender_type, m.message_content
-                FROM chat_messages m
-                JOIN chat_sessions s ON m.session_id = s.session_id
-                WHERE s.member_id = %s
-                  AND m.embedding IS NOT NULL
-                  AND m.message_id NOT IN (
-                      SELECT message_id 
-                      FROM chat_messages 
-                      WHERE session_id = %s 
-                      ORDER BY message_id DESC 
-                      LIMIT 10
-                  )
-                ORDER BY m.embedding <=> %s::vector
+                -- 1단계: 중복 텍스트 제거를 위한 임시 테이블(CTE) 생성
+                WITH UniqueMessages AS (
+                    SELECT m.sender_type, m.message_content, m.message_id, m.embedding,
+                           -- 내용(message_content)이 같은 것들끼리 묶어서, 최신순(message_id DESC)으로 번호(rn)를 매김
+                           ROW_NUMBER() OVER(PARTITION BY m.message_content ORDER BY m.message_id DESC) as rn
+                    FROM chat_messages m
+                    JOIN chat_sessions s ON m.session_id = s.session_id
+                    WHERE s.member_id = %s
+                      AND m.embedding IS NOT NULL
+                      AND m.message_id NOT IN (
+                          SELECT message_id 
+                          FROM chat_messages 
+                          WHERE session_id = %s 
+                          ORDER BY message_id DESC 
+                          LIMIT 10
+                      )
+                )
+                -- 2단계: 중복이 제거된 데이터에서 거리 계산 및 최종 필터링
+                SELECT sender_type, message_content
+                FROM UniqueMessages
+                WHERE rn = 1  -- 각 중복 텍스트 그룹 중 가장 최신 메시지(1번)만 선택
+                  AND (embedding <=> %s::vector) < %s
+                ORDER BY embedding <=> %s::vector, message_id DESC
                 LIMIT %s
                 """,
-                (member_id, current_session_id, query_embedding, limit),
+                # 파라미터 매핑 순서는 이전과 완벽히 동일하게 유지됩니다.
+                (member_id, current_session_id, query_embedding, distance_threshold, query_embedding, limit),
             )
             rows = cur.fetchall()
             return "\n".join([f"[{'사용자' if r[0]=='USER' else 'NUDGEBOT'}] {r[1]}" for r in rows])
