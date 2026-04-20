@@ -60,7 +60,7 @@ class ChatRepository:
     
     # 코사인 거리 필터링 하는 버전
     def search_past_conversations(
-        self, member_id: int, current_session_id: str, query_embedding: list[float], limit: int = 10, distance_threshold: float = 0.7) -> str:
+        self, member_id: int, current_session_id: str, query_embedding: list[float], limit: int = 10, distance_threshold: float = 0.8) -> str:  #임시파라미터값입니다.
         #현재 세션의 최근 10개 메세지(History에 들어갈 내용)는 RAG 검색에서 제외
         #코사인 거리 필터링: 임계값(0.3) 이하인==코사인유사도가 0.7 이상인, 즉 유사도가 높은 대화만 필터링
         conn = get_db_connection()
