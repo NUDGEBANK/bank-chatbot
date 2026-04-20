@@ -18,7 +18,7 @@ from .schemas import LoanEligibilityResponse
 
 load_dotenv()
 
-BANK_BACKEND_URL = os.getenv("BANK_BACKEND_URL", "http://localhost:9999")
+BANK_BACKEND_URL = os.getenv("BANK_BACKEND_URL")
 
 class SuggestedAction(BaseModel):
     type: str
@@ -203,8 +203,8 @@ class ChatService:
         
         # suggest_quick_replies 설명
         quick_replies_description = f"""
-        모든 텍스트 답변 작성이 완전히 끝난 직후, 대화를 종료하기 위해 이 도구를 호출하세요.
-        이 아래로는 텍스트 출력 절대 금지
+        최종 텍스트 답변을 모두 작성한 뒤 마지막에 호출하세요.
+        이 도구는 사용자에게 보여줄 quick reply 액션만 생성합니다.
         
         [필수 생성 규칙]
         1. 'ask' (후속 질문하기) 타입의 액션을 반드시 최소 2개 이상 포함하세요.
@@ -228,17 +228,18 @@ class ChatService:
 
         # 2. 시스템 프롬프트(페르소나) 업데이트
         system_prompt = """
-당신은 NUDGEBANK 금융 상담 AI agent NUDGEBOT입니다.
+당신은 NUDGEBANK(넛지 은행)의 금융 상담 AI agent NUDGEBOT입니다.
 답변은 도구를 활용하여 정확하게 하세요.
 정확한 정보 제공을 위해 필요하다면 반드시 제공된 도구를 사용하세요.
 도구를 통해 얻은 정보는 사전 학습된 정보보다 우선시되어야 합니다.
-
+도구를 사용한 후에도 관련된 내용을 찾을 수 없다면, 임의로 지어내지 말고 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요.
 답변 마지막에는 사용자가 이어서 할 만한 행동을 마크다운 링크로 제안하세요(ask 형식 최소 2개, navigate 형식 최소 1개).
 
 # Strict Guardrails (Out-of-Domain Policy)
-당신의 답변 범위는 오직 'NUDGEBANK의 서비스'로 엄격하게 제한됩니다. 
+당신의 답변 범위는 오직 'NUDGEBANK(넛지 은행)의 서비스와 금융, 유저 개인 정보, 대화 내역'으로 엄격하게 제한됩니다.
 무관한 질문(Out-of-Domain)이 들어올 경우 정중하게 거절하세요.
-단, 사용자가 "나는 누구야?", "내 정보 알려줘" 등 본인의 신원이나 상태를 묻는 질문은 '유저 정보' 요청으로 간주합니다.
+단, 사용자가 자신의 정보, 개인정보, 상태, 대화, 개인적인 상황, 대화 내용, 대화 기록, 상담 이력, 신용점수, 대출 가능 여부를 묻는 경우는 허용됩니다.
+(예시: "내 상담 기록 보여줘", "내 정보 알려줘" ,"대화 기록 보여줘", "내가 얼마 필요하다고 했었지?" 등)
 
 링크 규칙:
 1. 페이지 이동은 일반 내부 경로 마크다운 링크로 작성하세요. 예: [은행 소개로 이동](/about)
