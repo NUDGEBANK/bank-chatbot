@@ -34,19 +34,23 @@ AVAILABLE_PAGES = [
 
     {"href": "/about", "label": "은행 소개로 이동"},
 
-    {"href": "/deposit/products", "label": "예적금 상품 보기로 이동"},
-    {"href": "/deposit/management", "label": "예적금 관리로 이동"},
+    {"href": "/deposit/products", "label": "예적금 상품 페이지로 이동"},
+    {"href": "/deposit/management", "label": "예적금 관리 페이지로 이동"},
 
-    {"href": "/loan/products", "label": "대출 상품 보기로 이동"},
-    {"href": "/loan/apply-guide", "label": "대출 신청 안내 보기로 이동"},
-    {"href": "/loan/management", "label": "내 대출 관리로 이동"},
-    {"href": "/loan/credit-score", "label": "신용 평가로 이동"},
+    {"href": "/loan/products", "label": "대출 상품 페이지로 이동"},
+    {"href": "/loan/products/consumption-loan", "label": "넛지 대출 상세 보기 페이지로 이동"},
+    {"href": "/loan/products/consumption-loan/apply", "label": "넛지 대출 신청 페이지로 이동"},
+    {"href": "/loan/products/youth-loan", "label": "자기계발 대출 상세 보기 페이지로 이동"},
+    {"href": "/loan/products/youth-loan/apply", "label": "자기계발 대출 신청 페이지로 이동"},
+    {"href": "/loan/apply-guide", "label": "대출 신청 안내 페이지로 이동"},
+    {"href": "/loan/management", "label": "내 대출 관리 페이지로 이동"},
+    {"href": "/loan/credit-score", "label": "신용 평가 페이지로 이동"},
     
-    {"href": "/card/nudgecard", "label": "넛지 카드 보기로 이동"},
-    {"href": "/card/history", "label": "카드 이용 내역으로 이동"},
-    {"href": "/card/spending-analysis", "label": "소비 분석으로 이동"},
+    {"href": "/card/nudgecard", "label": "넛지 체크카드 페이지로 이동"},
+    {"href": "/card/history", "label": "카드 이용 내역 페이지로 이동"},
+    {"href": "/card/spending-analysis", "label": "소비 분석 페이지로 이동"},
 
-    {"href": "/help/chat-history", "label": "상담 기록 보기로 이동"},
+    {"href": "/account/mypage", "label": "마이페이지로 이동"},
 ]
 
 async def fetch_loan_eligibility(
@@ -172,8 +176,8 @@ class ChatService:
             return f"사용자 이름은 {name}이고, 현재 신용점수는 {credit}점입니다."
 
         @tool
-        async def search_loan_info(query: str) -> str:
-            """NUDGEBANK의 대출 상품, 금리, 조건, 신청 관련 정보에 대한 구체적인 지식이 필요할 때 이 도구를 사용하세요."""
+        async def search_ragdocs_info(query: str) -> str:
+            """NUDGEBANK의 은행 소개, 대출 상품, 예금 적금 상품, 카드, 금리, 조건, 신청 관련 정보, 기타 정보에 대한 구체적인 지식이 필요할 때 이 도구를 사용하세요."""
             print(f"[Agent Tool Call] 🔍 대출 문서 검색 중: {query}")
             query_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(query).tolist())
             context = await loop.run_in_executor(None, self.vector_repository.search_documents, query_embedding)
@@ -183,8 +187,9 @@ class ChatService:
         @tool
         async def search_past_chat(query: str) -> str:
             """과거에 사용자와 나누었던 대화 기록이나 문맥을 확인해야 할 때 이 도구를 사용하세요."""
-            print(f"[Agent Tool Call] 🗂️ 과거 대화 검색 중: {message}")
-            past_context = await loop.run_in_executor(None, self.chat_repository.search_past_conversations, member_id, session_id, user_msg_embedding)
+            print(f"[Agent Tool Call] 🗂️ 과거 대화 검색 중: {query}")
+            query_embedding = await loop.run_in_executor(None, lambda: self.embed_model.encode(query).tolist())
+            past_context = await loop.run_in_executor(None, self.chat_repository.search_past_conversations, member_id, session_id, query_embedding)
             print(f"[📃대화 RAG (past_context)]:\n{past_context}")
             return past_context
 
@@ -220,32 +225,50 @@ class ChatService:
 
         tools = [
             get_user_profile,
-            search_loan_info,
+            search_ragdocs_info,
             search_past_chat,
             check_loan_eligibility,
-            suggest_quick_replies
+            # suggest_quick_replies
         ]
 
         # 2. 시스템 프롬프트(페르소나) 업데이트
-        system_prompt = """
-당신은 NUDGEBANK(넛지 은행)의 금융 상담 AI agent NUDGEBOT입니다.
-답변은 도구를 활용하여 정확하게 하세요.
-정확한 정보 제공을 위해 필요하다면 반드시 제공된 도구를 사용하세요.
-도구를 통해 얻은 정보는 사전 학습된 정보보다 우선시되어야 합니다.
-도구를 사용한 후에도 관련된 내용을 찾을 수 없다면, 임의로 지어내지 말고 정확한 확인을 위해 추가 참고가 필요하다고 안내하세요.
-답변 마지막에는 사용자가 이어서 할 만한 행동을 마크다운 링크로 제안하세요(ask 형식 최소 2개, navigate 형식 최소 1개).
+        system_prompt = f"""
+You are NUDGEBOT, a financial consulting AI agent for NUDGEBANK.
+Your primary role is to assist users with banking services, loans, and personal financial information.
+
+# Core Directives
+1. Output Language: You MUST always respond in Korean (한국어).
+2. Action Links (Absolute Trigger): No matter what the user says—whether it is a financial question, a simple greeting, a short reply, or an Out-of-Domain query—you MUST generate exactly 4 suggested action links at the very end of EVERY response, strictly following the Action Link Generation Rules below.
+3. Tool Usage: You MUST use the `search_ragdocs_info` tool for EVERY question to gather domain knowledge. Use other tools as necessary.
+4. Information Priority: Information retrieved from tools MUST take precedence over your pre-trained knowledge.
+5. Missing Information: If you cannot find the relevant information even after using tools, DO NOT hallucinate or make up facts. Politely inform the user that additional checking is required.
+6. Formatting: DO NOT output JSON, function call formats, or raw code blocks in your final response to the user.
 
 # Strict Guardrails (Out-of-Domain Policy)
-당신의 답변 범위는 오직 'NUDGEBANK(넛지 은행)의 서비스와 금융, 유저 개인 정보, 대화 내역'으로 엄격하게 제한됩니다.
-무관한 질문(Out-of-Domain)이 들어올 경우 정중하게 거절하세요.
-단, 사용자가 자신의 정보, 개인정보, 상태, 대화, 개인적인 상황, 대화 내용, 대화 기록, 상담 이력, 신용점수, 대출 가능 여부를 묻는 경우는 허용됩니다.
-(예시: "내 상담 기록 보여줘", "내 정보 알려줘" ,"대화 기록 보여줘", "내가 얼마 필요하다고 했었지?" 등)
+Your scope is strictly limited to NUDGEBANK's services, finance, user personal information, and chat history.
+- You MUST politely decline any queries that are unrelated to these topics (Out-of-Domain).
+- EXCEPTION: You are allowed to answer questions regarding the user's personal info, status, chat history, credit score, and loan eligibility (e.g., "Show my chat history", "What is my credit score?", "Can I get a loan?").
 
-링크 규칙:
-1. 페이지 이동은 일반 내부 경로 마크다운 링크로 작성하세요. 예: [은행 소개로 이동](/about)
-2. 이어서 질문하기는 반드시 #ask= 형식의 마크다운 링크로 작성하세요. 예: [대출 상품에 대해 알고 싶어요](#ask=대출%20상품에%20대해%20알고%20싶어요)
-3. #ask= 뒤에는 사용자가 실제로 보낼 질문 문장을 URL 인코딩해서 넣으세요.
-4. suggest_quick_replies, JSON, 함수 호출 형식, 코드블록은 본문에 출력하지 마세요.
+# Action Link Generation Rules (Strict Output Template)
+At the very end of EVERY response, you MUST provide exactly 4 suggested actions. 
+To ensure this, you MUST append the following exact Markdown structure at the bottom of your response without fail:
+
+---
+**💡 이런 질문은 어때요?**
+- [First follow-up question](#ask=URL_ENCODED_QUESTION_1)
+- [Second follow-up question](#ask=URL_ENCODED_QUESTION_2)
+
+**🔗 바로가기**
+- [Navigation Label 1](ALLOWED_PATH_1)
+- [Navigation Label 2](ALLOWED_PATH_2)
+
+* Rules for the Template:
+1. The first two links MUST use the `#ask=` format with URL-encoded questions.
+2. The last two links MUST be selected ONLY from the [Allowed Paths for Navigation] list.
+3. DO NOT change this visual layout. ALWAYS output exactly 2 questions and 2 navigation links.
+
+[Allowed Paths for Navigation]
+{available_pages_info}
 """.strip()
 
         # 3. Agent 생성
