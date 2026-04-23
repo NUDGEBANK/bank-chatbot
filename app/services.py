@@ -263,9 +263,12 @@ To ensure this, you MUST append the following exact Markdown structure at the bo
 - [Navigation Label 2](ALLOWED_PATH_2)
 
 * Rules for the Template:
-1. The first two links MUST use the `#ask=` format with URL-encoded questions.
+1. The first two links MUST use the `#ask=` format. 
+   CRITICAL: To ensure valid Markdown, DO NOT fully URL-encode the Korean text. You MUST keep the Korean characters as they are, but you MUST replace ALL spaces in the URL part with `%20`.
+   (e.g., WRONG: [내 신용 점수](#ask=내 신용 점수) / CORRECT: [내 신용 점수](#ask=내%20신용%20점수))
 2. The last two links MUST be selected ONLY from the [Allowed Paths for Navigation] list.
-3. DO NOT change this visual layout. ALWAYS output exactly 2 questions and 2 navigation links.
+3. CRITICAL: DO NOT use `#` for the navigation links in the '바로가기' section. They MUST start exactly with `/` as provided in the list (e.g., `/loan/products`).
+4. DO NOT change this visual layout. ALWAYS output exactly 2 questions and 2 navigation links.
 
 [Allowed Paths for Navigation]
 {available_pages_info}
